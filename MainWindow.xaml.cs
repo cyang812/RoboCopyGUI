@@ -183,13 +183,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        long totalFiles = Math.Max(itemsToCopy.Sum(item => CountFilesInPath(item.Path)), itemsToCopy.Count);
-        long filesCopied = 0;
-
-        void ReportFileCopied()
+        void UpdateCurrentFileProgress(long copied, long total)
         {
-            long completed = Interlocked.Increment(ref filesCopied);
-            double progress = ((double)completed / totalFiles) * 100;
+            double progress = total == 0 ? 100 : ((double)copied / total) * 100;
             DispatcherQueue.TryEnqueue(() => CopyProgressBar.Value = progress);
         }
 
@@ -205,21 +201,20 @@ public sealed partial class MainWindow : Window
             DispatcherQueue.TryEnqueue(() =>
             {
                 StatusText.Text = $"Copying: {fileName}";
+                CopyProgressBar.Value = 0;
             });
 
             await Task.Run(() =>
             {
                 if (Directory.Exists(item.Path))
-                    CopyDirectoryWithProgress(item.Path, destFile, deleteSource, ReportFileCopied);
+                {
+                    CopyDirectoryWithProgress(item.Path, destFile, deleteSource, token, UpdateCurrentFileProgress);
+                }
                 else
                 {
-                    File.Copy(item.Path, destFile, true);
-                    ReportFileCopied();
-
-                    if (deleteSource && !Directory.Exists(item.Path))
-                        File.Delete(item.Path);
+                    CopyFileWithProgress(item.Path, destFile, deleteSource, token, UpdateCurrentFileProgress);
                 }
-            });
+            }, token);
 
             DispatcherQueue.TryEnqueue(() =>
             {
@@ -228,43 +223,48 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static long CountFilesInPath(string path)
-    {
-        if (File.Exists(path))
-        {
-            return 1;
-        }
-
-        if (!Directory.Exists(path))
-        {
-            return 0;
-        }
-
-        long count = 0;
-        foreach (var _ in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-        {
-            count++;
-        }
-
-        return Math.Max(count, 1);
-    }
-
-    private static void CopyDirectoryWithProgress(string sourceDir, string destDir, bool deleteAfter, Action reportFile)
+    private static void CopyDirectoryWithProgress(string sourceDir, string destDir, bool deleteAfter, CancellationToken token, Action<long, long> reportProgress)
     {
         Directory.CreateDirectory(destDir);
         foreach (string file in Directory.GetFiles(sourceDir))
         {
+            token.ThrowIfCancellationRequested();
             string dest = Path.Combine(destDir, Path.GetFileName(file));
-            File.Copy(file, dest, true);
-            reportFile();
+            CopyFileWithProgress(file, dest, deleteAfter, token, reportProgress);
         }
         foreach (string folder in Directory.GetDirectories(sourceDir))
         {
-            CopyDirectoryWithProgress(folder, Path.Combine(destDir, Path.GetFileName(folder)), deleteAfter, reportFile);
+            token.ThrowIfCancellationRequested();
+            CopyDirectoryWithProgress(folder, Path.Combine(destDir, Path.GetFileName(folder)), deleteAfter, token, reportProgress);
         }
         if (deleteAfter)
         {
             Directory.Delete(sourceDir, true);
+        }
+    }
+
+    private static void CopyFileWithProgress(string sourceFile, string destFile, bool deleteAfter, CancellationToken token, Action<long, long> reportProgress)
+    {
+        long totalBytes = new FileInfo(sourceFile).Length;
+        byte[] buffer = new byte[81920];
+        int bytesRead;
+        long totalRead = 0;
+        using (FileStream sourceStream = File.Open(sourceFile, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (FileStream destStream = File.Open(destFile, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            while ((bytesRead = sourceStream.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                token.ThrowIfCancellationRequested();
+                destStream.Write(buffer, 0, bytesRead);
+                totalRead += bytesRead;
+                reportProgress(totalRead, totalBytes);
+            }
+            reportProgress(totalBytes, totalBytes);
+        }
+
+        if (deleteAfter)
+        {
+            File.Delete(sourceFile);
         }
     }
 
@@ -273,6 +273,9 @@ public sealed partial class MainWindow : Window
         StartBtn.IsEnabled = !isOperating;
         PauseBtn.IsEnabled = isOperating;
         CancelBtn.IsEnabled = isOperating;
+        ClearListBtn.IsEnabled = !isOperating;
+        BrowseDestBtn.IsEnabled = !isOperating;
+        DropArea.AllowDrop = !isOperating;
         CopyProgressBar.Visibility = isOperating ? Visibility.Visible : Visibility.Collapsed;
         if (!isOperating) CopyProgressBar.Value = 0;
     }

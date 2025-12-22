@@ -4,6 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:local="using:RoboCopyGUI"
     mc:Ignorable="d"
     Title="WinUI 3 File Copier">
 
@@ -47,23 +48,24 @@
                           BorderThickness="0"
                           IsTabStop="False">
                     <ListView.ItemTemplate>
-                        <DataTemplate>
+                        <DataTemplate x:DataType="local:SourceItem">
                             <Grid ColumnDefinitions="*, Auto" Padding="6,4">
-                                <TextBlock Text="{Binding Path}"
+                                <TextBlock Text="{x:Bind Path}"
                                            TextTrimming="CharacterEllipsis"
                                            TextWrapping="WrapWholeWords"
-                                           Foreground="{Binding TextBrush}"
+                                           Foreground="{x:Bind TextBrush, Mode=OneWay}"
                                            VerticalAlignment="Center"/>
                                 <FontIcon Glyph="&#xE73E;"
                                           Grid.Column="1"
+                                          FontSize="16"
                                           Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
-                                          Visibility="{Binding CompletionVisibility}"/>
+                                          Visibility="{x:Bind CompletionVisibility, Mode=OneWay}"/>
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
 
-                <Button Grid.Row="2"
+                <Button x:Name="ClearListBtn" Grid.Row="2"
                         Content="Clear list"
                         HorizontalAlignment="Right"
                         Margin="0,12,0,0"
@@ -75,7 +77,7 @@
             <TextBlock Text="Destination Path" Style="{StaticResource BodyStrongTextBlockStyle}"/>
             <Grid ColumnDefinitions="*, Auto">
                 <TextBox x:Name="DestPathText" PlaceholderText="Select a folder..." IsReadOnly="True" VerticalAlignment="Center"/>
-                <Button Grid.Column="1" Content="Browse" Click="SelectDest_Click" Margin="10,0,0,0"/>
+                <Button x:Name="BrowseDestBtn" Grid.Column="1" Content="Browse" Click="SelectDest_Click" Margin="10,0,0,0"/>
             </Grid>
 
             <CheckBox x:Name="DeleteSourceCheck" Content="Delete source files after successful copy (Move mode)"/>
