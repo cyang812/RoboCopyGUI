@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "RoboCopyGUI (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "RoboCopyGUI (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

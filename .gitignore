@@ -1,0 +1,52 @@
+# Visual Studio
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+*.cache
+
+# Compiled code
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+build/
+*.dll
+*.exe
+*.pdb
+
+# Visual Studio Code
+.vscode/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Publish
+*.pubxml
+
+# NuGet
+*.nuget.props
+*.nuget.targets
+
+# WinUI / UWP
+*.appx
+*.msix
+*.appxbundle
+*.msixbundle
+*.msixupload
+*.appxupload
+AppPackages/
+BundleArtifacts/
+_pkginfo.txt
+*.resfiles
+*.pri
+
+# Other
+*.log
