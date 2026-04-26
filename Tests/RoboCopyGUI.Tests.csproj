@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>RoboCopyGUI.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Compile a small, UI-independent slice of the app directly into the test assembly.
+      We deliberately do NOT ProjectReference the WinUI app: that csproj targets
+      net8.0-windows10.0.19041.0 and pulls Microsoft.UI.* assemblies, which would force
+      the tests onto Windows and bloat the test build.
+    -->
+    <Compile Include="..\Services\CopyEngine.cs" Link="Services\CopyEngine.cs" />
+    <Compile Include="..\Services\PauseTokenSource.cs" Link="Services\PauseTokenSource.cs" />
+    <Compile Include="..\Services\Enums.cs" Link="Services\Enums.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
+  </ItemGroup>
+</Project>

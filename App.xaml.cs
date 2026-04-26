@@ -11,6 +11,8 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
+using RoboCopyGUI.Services;
+using Serilog;
 using Windows.ApplicationModel;
 using Windows.ApplicationModel.Activation;
 using Windows.Foundation;
@@ -28,12 +30,32 @@ namespace RoboCopyGUI
     {
         private Window? _window;
 
+        /// <summary>The settings loaded at startup; mutated and saved by MainWindow.</summary>
+        public static AppSettings Settings { get; private set; } = new();
+
+        /// <summary>UI thread dispatcher captured when the main window is created;
+        /// used by background services (e.g. <c>CopyEngine</c>) to marshal updates.</summary>
+        public static Microsoft.UI.Dispatching.DispatcherQueue? UiDispatcher { get; internal set; }
+
         /// <summary>
         /// Initializes the singleton application object.  This is the first line of authored code
         /// executed, and as such is the logical equivalent of main() or WinMain().
         /// </summary>
         public App()
         {
+            // Bring up logging + settings before XAML so any constructor-time issues are captured.
+            try
+            {
+                Settings = SettingsService.Load();
+                LoggingService.Initialize(Settings.LogLevel);
+                NotificationService.Initialize();
+                Log.Information("RoboCopyGUI starting. Base dir: {BaseDir}", AppContext.BaseDirectory);
+            }
+            catch
+            {
+                // Never let logging/settings init crash the app launch.
+            }
+
             InitializeComponent();
         }
 
@@ -44,6 +66,18 @@ namespace RoboCopyGUI
         protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
         {
             _window = new MainWindow();
+            _window.Closed += (_, _) =>
+            {
+                try
+                {
+                    SettingsService.Save(Settings);
+                }
+                finally
+                {
+                    NotificationService.Shutdown();
+                    LoggingService.Shutdown();
+                }
+            };
             _window.Activate();
         }
     }
