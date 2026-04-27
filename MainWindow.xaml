@@ -8,91 +8,285 @@
     mc:Ignorable="d"
     Title="WinUI 3 File Copier">
 
-    <Grid Padding="30" RowDefinitions="Auto, *, Auto, Auto, Auto">
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+          RowDefinitions="Auto, *">
 
-        <StackPanel Grid.Row="0" Margin="0,0,0,20">
-            <TextBlock Text="File Transfer Utility" Style="{StaticResource TitleTextBlockStyle}" FontWeight="Bold"/>
-            <TextBlock Text="Drag and drop sources and select a destination." Style="{StaticResource CaptionTextBlockStyle}" Opacity="0.7"/>
-        </StackPanel>
+        <!-- Custom title bar: drawn by us so it follows the chosen theme.
+             ExtendsContentIntoTitleBar=true is set in code-behind. -->
+        <Grid x:Name="AppTitleBar"
+              Grid.Row="0"
+              Height="36"
+              Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+              ColumnDefinitions="Auto, *, Auto">
+            <FontIcon Glyph="&#xE8B7;"
+                      FontSize="14"
+                      Margin="12,0,8,0"
+                      VerticalAlignment="Center"/>
+            <TextBlock x:Name="AppTitleText"
+                       Grid.Column="1"
+                       Text="WinUI 3 File Copier"
+                       VerticalAlignment="Center"
+                       Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                       Style="{StaticResource CaptionTextBlockStyle}"
+                       TextTrimming="CharacterEllipsis"/>
+            <!-- right column reserved by Windows for the min/max/close caption buttons -->
+        </Grid>
 
-        <Border x:Name="DropArea" 
-                Grid.Row="1"
-                Background="Transparent"
-                BorderBrush="{ThemeResource SystemControlDisabledAccentConfigurableBrush}"
-                BorderThickness="2" 
-                CornerRadius="8"
-                AllowDrop="True"
-                DragOver="DropArea_DragOver"
-                Drop="DropArea_Drop">
+        <Grid Grid.Row="1"
+              Padding="30"
+              RowDefinitions="Auto, *, Auto, Auto, Auto">
 
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
+            <StackPanel Grid.Row="0"
+                        Margin="0,0,0,20">
+                <TextBlock Text="File Transfer Utility"
+                           Style="{StaticResource TitleTextBlockStyle}"
+                           FontWeight="Bold"/>
+                <TextBlock Text="Drag and drop sources and select a destination."
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Opacity="0.7"/>
+            </StackPanel>
 
-                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8" Grid.Row="0">
-                    <FontIcon Glyph="&#xE8B7;" FontSize="48" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
-                    <TextBlock Text="Drop Files or Folders Here" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                    <TextBlock x:Name="FileCountText" Text="0 items selected" Style="{StaticResource CaptionTextBlockStyle}" HorizontalAlignment="Center"/>
+            <Border x:Name="DropArea"
+                    Grid.Row="1"
+                    Background="Transparent"
+                    BorderBrush="{ThemeResource SystemControlDisabledAccentConfigurableBrush}"
+                    BorderThickness="2"
+                    CornerRadius="8"
+                    AllowDrop="True"
+                    DragOver="DropArea_DragOver"
+                    Drop="DropArea_Drop">
+
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Layer 1: list (always present, fills the area when there are items) -->
+                    <ListView x:Name="SourceListView"
+                              Grid.Row="0"
+                              ItemsSource="{x:Bind SourceItems, Mode=OneWay}"
+                              SelectionMode="None"
+                              IsItemClickEnabled="False"
+                              Margin="6"
+                              Background="Transparent"
+                              BorderThickness="0"
+                              IsTabStop="False">
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="local:SourceItem">
+                                <Grid ColumnDefinitions="*, Auto"
+                                      Padding="6,4">
+                                    <TextBlock Text="{x:Bind Path}"
+                                               TextTrimming="CharacterEllipsis"
+                                               TextWrapping="WrapWholeWords"
+                                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                               Opacity="{x:Bind PathOpacity, Mode=OneWay}"
+                                               VerticalAlignment="Center"
+                                               ToolTipService.ToolTip="{x:Bind StatusToolTip, Mode=OneWay}"/>
+                                    <FontIcon Glyph="{x:Bind StatusGlyph, Mode=OneWay}"
+                                              Grid.Column="1"
+                                              FontSize="16"
+                                              Foreground="{x:Bind StatusBrush, Mode=OneWay}"
+                                              ToolTipService.ToolTip="{x:Bind StatusToolTip, Mode=OneWay}"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+
+                    <!-- Layer 2: drop hint, on top, hit-test invisible so the list still
+                         receives clicks. Visible only when the queue is empty. -->
+                    <StackPanel x:Name="DropHintPanel"
+                                Grid.Row="0"
+                                VerticalAlignment="Center"
+                                HorizontalAlignment="Center"
+                                Spacing="14"
+                                IsHitTestVisible="False"
+                                Opacity="1.0">
+                        <FontIcon Glyph="&#xE8B7;"
+                                  FontSize="96"
+                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <TextBlock Text="Drop Files or Folders Here"
+                                   FontSize="22"
+                                   FontWeight="SemiBold"
+                                   HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="FileCountText"
+                                   Text="0 items selected"
+                                   FontSize="14"
+                                   HorizontalAlignment="Center"/>
+                    </StackPanel>
+
+                    <Grid Grid.Row="1"
+                          Margin="0,12,0,0"
+                          ColumnDefinitions="Auto, Auto, *, Auto">
+                        <Button x:Name="AddFilesBtn"
+                                Content="Add Files…"
+                                Click="AddFiles_Click"
+                                Margin="0,0,8,0"/>
+                        <Button x:Name="AddFolderBtn"
+                                Grid.Column="1"
+                                Content="Add Folder…"
+                                Click="AddFolder_Click"/>
+                        <Button x:Name="ClearListBtn"
+                                Grid.Column="3"
+                                Content="Clear list"
+                                Click="ClearSources_Click"/>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="2"
+                        Margin="0,20,0,0"
+                        Spacing="10">
+                <TextBlock Text="Destination Path"
+                           Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                <Grid ColumnDefinitions="*, Auto">
+                    <ComboBox x:Name="DestPathCombo"
+                              IsEditable="True"
+                              PlaceholderText="Select or type a destination folder..."
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Center"
+                              TextSubmitted="DestPathCombo_TextSubmitted"
+                              SelectionChanged="DestPathCombo_SelectionChanged"/>
+                    <Button x:Name="BrowseDestBtn"
+                            Grid.Column="1"
+                            Content="Browse"
+                            Click="SelectDest_Click"
+                            Margin="10,0,0,0"/>
+                </Grid>
+
+                <CheckBox x:Name="DeleteSourceCheck"
+                          Content="Delete source files after successful copy (Move mode)"
+                          Checked="DeleteSourceCheck_Changed"
+                          Unchecked="DeleteSourceCheck_Changed"/>
+
+                <Grid ColumnDefinitions="Auto, Auto, Auto"
+                      ColumnSpacing="20">
+                    <CheckBox x:Name="NotifyOnDoneCheck"
+                              Content="Toast on completion"
+                              Checked="NotificationToggles_Changed"
+                              Unchecked="NotificationToggles_Changed"/>
+                    <CheckBox x:Name="PlaySoundCheck"
+                              Grid.Column="1"
+                              Content="Play sound"
+                              Checked="NotificationToggles_Changed"
+                              Unchecked="NotificationToggles_Changed"/>
+                    <CheckBox x:Name="ShowNetCheck"
+                              Grid.Column="2"
+                              Content="Show network throughput"
+                              Checked="NotificationToggles_Changed"
+                              Unchecked="NotificationToggles_Changed"/>
+                </Grid>
+
+                <Grid ColumnDefinitions="Auto, Auto, *"
+                      ColumnSpacing="12">
+                    <TextBlock Text="Parallel small-file copies:"
+                               VerticalAlignment="Center"/>
+                    <NumberBox x:Name="ParallelSmallBox"
+                               Grid.Column="1"
+                               Minimum="1"
+                               Maximum="16"
+                               SmallChange="1"
+                               LargeChange="2"
+                               SpinButtonPlacementMode="Inline"
+                               ValueChanged="ParallelSmallBox_ValueChanged"
+                               Width="120"/>
+                    <TextBlock Grid.Column="2"
+                               Text="(1 = sequential. Threshold: 10 MiB)"
+                               Foreground="{ThemeResource SystemControlPlaceholderTextForegroundBrush}"
+                               VerticalAlignment="Center"/>
+                </Grid>
+
+                <Grid ColumnDefinitions="Auto, *"
+                      ColumnSpacing="12">
+                    <TextBlock Text="On conflict:"
+                               VerticalAlignment="Center"/>
+                    <ComboBox x:Name="ConflictPolicyCombo"
+                              Grid.Column="1"
+                              SelectionChanged="ConflictPolicyCombo_SelectionChanged"
+                              MinWidth="220">
+                        <ComboBoxItem Content="Overwrite existing"
+                                      Tag="Overwrite"/>
+                        <ComboBoxItem Content="Skip if destination exists"
+                                      Tag="Skip"/>
+                        <ComboBoxItem Content="Skip if size + time match"
+                                      Tag="SkipIfSame"/>
+                        <ComboBoxItem Content="Rename (append (1), (2)…)"
+                                      Tag="Rename"/>
+                    </ComboBox>
+                </Grid>
+            </StackPanel>
+
+            <StackPanel Grid.Row="3"
+                        Margin="0,20,0,20"
+                        Spacing="6">
+                <TextBlock x:Name="StatusText"
+                           Text="Ready"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource SystemControlPlaceholderTextForegroundBrush}"/>
+                <TextBlock x:Name="NetText"
+                           Text=""
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource SystemControlPlaceholderTextForegroundBrush}"
+                           Visibility="Collapsed"/>
+                <ProgressBar x:Name="CopyProgressBar"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"
+                             IsIndeterminate="False"
+                             Height="6"
+                             ToolTipService.ToolTip="Current file"/>
+                <Grid ColumnDefinitions="*, Auto"
+                      Margin="0,4,0,0">
+                    <ProgressBar x:Name="OverallProgressBar"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 Value="0"
+                                 IsIndeterminate="False"
+                                 Height="10"
+                                 ToolTipService.ToolTip="Overall progress"/>
+                    <TextBlock x:Name="OverallProgressText"
+                               Grid.Column="1"
+                               Text=""
+                               Margin="10,0,0,0"
+                               VerticalAlignment="Center"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource SystemControlPlaceholderTextForegroundBrush}"/>
+                </Grid>
+            </StackPanel>
+
+            <Grid Grid.Row="4"
+                  ColumnDefinitions="Auto, *, Auto, Auto, Auto">
+                <Button x:Name="ThemeBtn"
+                        Click="ThemeBtn_Click"
+                        HorizontalAlignment="Left"
+                        ToolTipService.ToolTip="Toggle theme">
+                    <FontIcon x:Name="ThemeIcon"
+                              Glyph="&#xEC46;"
+                              FontSize="16"/>
+                </Button>
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            Spacing="12">
+                    <Button x:Name="StartBtn"
+                            Content="Start Copy"
+                            Click="StartBtn_Click"
+                            Style="{StaticResource AccentButtonStyle}"
+                            Width="100"/>
+                    <Button x:Name="PauseBtn"
+                            Content="Pause"
+                            Click="PauseBtn_Click"
+                            IsEnabled="False"
+                            Width="100"/>
+                    <Button x:Name="CancelBtn"
+                            Content="Cancel"
+                            Click="CancelBtn_Click"
+                            IsEnabled="False"
+                            Width="100"/>
                 </StackPanel>
-
-                <ListView x:Name="SourceListView"
-                          Grid.Row="1"
-                          ItemsSource="{x:Bind SourceItems, Mode=OneWay}"
-                          SelectionMode="None"
-                          IsItemClickEnabled="False"
-                          MaxHeight="220"
-                          Margin="0,24,0,0"
-                          BorderThickness="0"
-                          IsTabStop="False">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="local:SourceItem">
-                            <Grid ColumnDefinitions="*, Auto" Padding="6,4">
-                                <TextBlock Text="{x:Bind Path}"
-                                           TextTrimming="CharacterEllipsis"
-                                           TextWrapping="WrapWholeWords"
-                                           Foreground="{x:Bind TextBrush, Mode=OneWay}"
-                                           VerticalAlignment="Center"/>
-                                <FontIcon Glyph="&#xE73E;"
-                                          Grid.Column="1"
-                                          FontSize="16"
-                                          Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
-                                          Visibility="{x:Bind CompletionVisibility, Mode=OneWay}"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
-
-                <Button x:Name="ClearListBtn" Grid.Row="2"
-                        Content="Clear list"
-                        HorizontalAlignment="Right"
-                        Margin="0,12,0,0"
-                        Click="ClearSources_Click"/>
-            </Grid>
-        </Border>
-
-        <StackPanel Grid.Row="2" Margin="0,20,0,0" Spacing="10">
-            <TextBlock Text="Destination Path" Style="{StaticResource BodyStrongTextBlockStyle}"/>
-            <Grid ColumnDefinitions="*, Auto">
-                <TextBox x:Name="DestPathText" PlaceholderText="Select a folder..." IsReadOnly="True" VerticalAlignment="Center"/>
-                <Button x:Name="BrowseDestBtn" Grid.Column="1" Content="Browse" Click="SelectDest_Click" Margin="10,0,0,0"/>
             </Grid>
 
-            <CheckBox x:Name="DeleteSourceCheck" Content="Delete source files after successful copy (Move mode)"/>
-        </StackPanel>
-
-        <StackPanel Grid.Row="3" Margin="0,20,0,20" Spacing="10">
-            <TextBlock x:Name="StatusText" Text="Ready" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemControlPlaceholderTextForegroundBrush}"/>
-            <ProgressBar x:Name="CopyProgressBar" Minimum="0" Maximum="100" Value="0" IsIndeterminate="False" Height="10"/>
-        </StackPanel>
-
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="12">
-            <Button x:Name="StartBtn" Content="Start Copy" Click="StartBtn_Click" Style="{StaticResource AccentButtonStyle}" Width="100"/>
-            <Button x:Name="PauseBtn" Content="Pause" Click="PauseBtn_Click" IsEnabled="False" Width="100"/>
-            <Button x:Name="CancelBtn" Content="Cancel" Click="CancelBtn_Click" IsEnabled="False" Width="100"/>
-        </StackPanel>
+        </Grid>
+        <!-- /body grid -->
 
     </Grid>
 </Window>

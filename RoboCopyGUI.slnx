@@ -10,4 +10,5 @@
     <Platform Solution="*|x86" Project="x86" />
     <Deploy />
   </Project>
+  <Project Path="Tests/RoboCopyGUI.Tests.csproj" />
 </Solution>

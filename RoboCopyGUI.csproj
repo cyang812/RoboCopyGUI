@@ -12,6 +12,13 @@
     <WinUISDKReferences>false</WinUISDKReferences>
     <EnableMsixTooling>true</EnableMsixTooling>
     <Nullable>enable</Nullable>
+    <!--
+      Drop satellite resource folders for languages we don't ship. The Windows App SDK
+      otherwise emits ~80 locale subfolders next to the exe (cs/, de-de/, es/, fr-fr/, ...).
+      Restricting to "en" leaves just one. Add more codes (semicolon-separated) if
+      localized UI is needed later.
+    -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,6 +36,19 @@
   </ItemGroup>
 
   <!--
+    The Tests/ folder is a separate test csproj. Exclude its contents from the
+    main project's default Compile/EmbeddedResource/None globs so we don't compile
+    test files into the WinUI app or recompile Tests/obj/* AssemblyInfo files.
+  -->
+  <ItemGroup>
+    <Compile Remove="Tests\**" />
+    <EmbeddedResource Remove="Tests\**" />
+    <None Remove="Tests\**" />
+    <Page Remove="Tests\**" />
+    <ApplicationDefinition Remove="Tests\**" />
+  </ItemGroup>
+
+  <!--
     Defining the "Msix" ProjectCapability here allows the Single-project MSIX Packaging
     Tools extension to be activated for this project even if the Windows App SDK Nuget
     package has not yet been restored.
@@ -39,6 +59,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7175" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.251106002" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.Debug" Version="3.0.0" />
   </ItemGroup>
 
   <!--
@@ -57,4 +80,22 @@
     <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">False</PublishTrimmed>
     <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">True</PublishTrimmed>
   </PropertyGroup>
+
+  <!--
+    Post-publish cleanup: the Windows App SDK drops ~85 MRT locale folders (af-ZA, am-ET,
+    ar-SA, ..., zh-TW) next to the exe even though SatelliteResourceLanguages only filters
+    managed satellite DLLs. Delete every locale folder except $(KeepLocales).
+  -->
+  <Target Name="StripUnusedAppSdkLocales" AfterTargets="Publish">
+    <PropertyGroup>
+      <KeepLocales Condition="'$(KeepLocales)' == ''">en-us</KeepLocales>
+    </PropertyGroup>
+    <ItemGroup>
+      <_AllLocaleDirs Include="$([System.IO.Directory]::GetDirectories('$(PublishDir)'))" />
+      <_LocaleDirsToDelete Include="@(_AllLocaleDirs)"
+                           Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(Filename)', '^(?i)[a-z]{2,4}(-[A-Za-z0-9]{2,8})*$')) and !$(KeepLocales.Contains('%(Filename)'))" />
+    </ItemGroup>
+    <RemoveDir Directories="@(_LocaleDirsToDelete)" />
+    <Message Importance="high" Text="StripUnusedAppSdkLocales: removed @(_LocaleDirsToDelete-&gt;Count()) locale folder(s); kept '$(KeepLocales)'." />
+  </Target>
 </Project>

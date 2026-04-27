@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    # Tests target plain net8.0 with no WinUI deps, so we run them on ubuntu for speed.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Restore
+        run: dotnet restore Tests/RoboCopyGUI.Tests.csproj
+      - name: Test
+        run: dotnet test Tests/RoboCopyGUI.Tests.csproj --configuration Release --no-restore --verbosity normal
+
+  build-and-publish:
+    name: Build & publish ${{ matrix.rid }}
+    needs: test
+    # WinUI 3 unpackaged + WindowsAppSDK requires a Windows builder.
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            platform: x64
+          - rid: win-arm64
+            platform: ARM64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Restore
+        run: dotnet restore RoboCopyGUI.csproj
+      - name: Publish
+        shell: pwsh
+        # Pin PublishDir so the artifact path is deterministic regardless of how
+        # MSBuild lays out bin\<Platform>\... per RID. Also explicitly point at
+        # the matching publish profile (the csproj resolves
+        # PublishProfile=win-$(Platform).pubxml which is case-sensitive on the
+        # GHA Linux side of MSBuild — supply the file path directly to avoid
+        # NETSDK1198 when Platform=ARM64).
+        run: |
+          dotnet publish RoboCopyGUI.csproj `
+            -c Release `
+            -r ${{ matrix.rid }} `
+            -p:Platform=${{ matrix.platform }} `
+            -p:PublishProfile=Properties/PublishProfiles/${{ matrix.rid }}.pubxml `
+            -p:PublishDir=artifacts/${{ matrix.rid }}/ `
+            -p:WindowsPackageType=None `
+            -p:WindowsAppSDKSelfContained=true `
+            -p:SelfContained=true `
+            -p:PublishSingleFile=false `
+            -p:PublishReadyToRun=false `
+            -p:PublishTrimmed=false `
+            -p:EnableMsixTooling=true
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RoboCopyGUI-${{ matrix.rid }}
+          path: artifacts/${{ matrix.rid }}/
+          if-no-files-found: error
