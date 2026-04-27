@@ -48,11 +48,19 @@ jobs:
         run: dotnet restore RoboCopyGUI.csproj
       - name: Publish
         shell: pwsh
+        # Pin PublishDir so the artifact path is deterministic regardless of how
+        # MSBuild lays out bin\<Platform>\... per RID. Also explicitly point at
+        # the matching publish profile (the csproj resolves
+        # PublishProfile=win-$(Platform).pubxml which is case-sensitive on the
+        # GHA Linux side of MSBuild — supply the file path directly to avoid
+        # NETSDK1198 when Platform=ARM64).
         run: |
           dotnet publish RoboCopyGUI.csproj `
             -c Release `
             -r ${{ matrix.rid }} `
             -p:Platform=${{ matrix.platform }} `
+            -p:PublishProfile=Properties/PublishProfiles/${{ matrix.rid }}.pubxml `
+            -p:PublishDir=artifacts/${{ matrix.rid }}/ `
             -p:WindowsPackageType=None `
             -p:WindowsAppSDKSelfContained=true `
             -p:SelfContained=true `
@@ -64,5 +72,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: RoboCopyGUI-${{ matrix.rid }}
-          path: bin/Release/net8.0-windows10.0.19041.0/${{ matrix.rid }}/publish/
+          path: artifacts/${{ matrix.rid }}/
           if-no-files-found: error
