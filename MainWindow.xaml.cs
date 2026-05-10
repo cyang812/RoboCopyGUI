@@ -46,13 +46,12 @@ public sealed partial class MainWindow : Window
     private void UpdateSourceSummary()
     {
         int count = _sourceItems.Count;
-        string text = $"{count} item{(count == 1 ? string.Empty : "s")} selected";
         DispatcherQueue.TryEnqueue(() =>
         {
-            FileCountText.Text = text;
-            // Hint always visible (acts like a watermark); dim it once the queue
-            // has items so it doesn't compete with the list contents.
-            DropHintPanel.Opacity = count == 0 ? 1.0 : 0.30;
+            // Hide (don't just dim) the watermark once the queue has items so the
+            // listview gets the full drop-area surface — avoids overlap at low
+            // window heights and keeps the layout from reserving icon-sized space.
+            DropHintPanel.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
         });
     }
 
@@ -79,11 +78,44 @@ public sealed partial class MainWindow : Window
         ThemeService.Apply(this, App.Settings.Theme);
         UpdateThemeButtonLabel();
         ApplyTitleBarTheme();
+        EnforceMinimumWindowSize();
+        // Re-enforce the minimum on every user resize. The handler is idempotent
+        // (only resizes back when smaller than the floor) so it can't loop.
+        SizeChanged += (_, _) => EnforceMinimumWindowSize();
         Closed += (_, _) =>
         {
             _power.Release();
             StopNetworkMonitor();
         };
+    }
+
+    /// <summary>Logical-pixel floor below which the layout starts to break / clip.
+    /// Picked empirically from the at-default-DPI screenshot.</summary>
+    private const int MinWindowWidth  = 720;
+    private const int MinWindowHeight = 560;
+
+    /// <summary>Resize the AppWindow back up if it's currently below the minimum.
+    /// WinUI 3 doesn't expose Window.MinWidth/Height, so we enforce on each
+    /// SizeChanged event instead.</summary>
+    private void EnforceMinimumWindowSize()
+    {
+        try
+        {
+            var aw = AppWindow;
+            if (aw is null) return;
+            var size = aw.Size;
+            int w = Math.Max(size.Width,  MinWindowWidth);
+            int h = Math.Max(size.Height, MinWindowHeight);
+            if (w != size.Width || h != size.Height)
+            {
+                aw.Resize(new Windows.Graphics.SizeInt32(w, h));
+            }
+        }
+        catch
+        {
+            // AppWindow APIs are best-effort here; a missing AppWindow shouldn't
+            // crash the constructor or the resize loop.
+        }
     }
 
     /// <summary>

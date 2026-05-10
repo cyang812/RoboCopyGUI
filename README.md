@@ -58,8 +58,9 @@ Tests/
 Requires Windows 10 19041+ and the .NET 8 SDK.
 
 ```pwsh
-# Debug build
-dotnet build RoboCopyGUI.csproj -c Debug -p:Platform=x64 -p:WindowsPackageType=None
+# Debug build (csproj defaults to WindowsPackageType=None so the .exe is
+# directly runnable; pass -p:WindowsPackageType=Msix to produce an MSIX build).
+dotnet build
 
 # Self-contained publish (this is what to ship — single click to run)
 dotnet publish RoboCopyGUI.csproj -c Release -r win-x64 -p:Platform=x64 `

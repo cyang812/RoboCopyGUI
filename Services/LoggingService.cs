@@ -20,10 +20,36 @@ public static class LoggingService
         Directory.CreateDirectory(LogDirectory);
 
         LogEventLevel level = ParseLevel(levelText);
-        string template =
+        Log.Logger = BuildLogger(level);
+
+        Log.Information("Logging initialized at level {Level}. Log directory: {Dir}",
+            level, LogDirectory);
+    }
+
+    /// <summary>Reapply a new minimum level without restarting the app.
+    /// Builds the new logger first and only closes the previous one once the
+    /// swap has succeeded, so a failure here can't leave the app loggerless.</summary>
+    public static void SetLevel(string levelText)
+    {
+        Log.Information("Reinitializing logger at new level: {Level}", levelText);
+        Directory.CreateDirectory(LogDirectory);
+        LogEventLevel level = ParseLevel(levelText);
+        var newLogger = BuildLogger(level);
+        var old = Log.Logger;
+        Log.Logger = newLogger;
+        try { (old as IDisposable)?.Dispose(); }
+        catch { /* best-effort flush of the previous sink */ }
+        Log.Information("Logger swapped to level {Level}.", level);
+    }
+
+    public static void Shutdown() => Log.CloseAndFlush();
+
+    private static Serilog.ILogger BuildLogger(LogEventLevel level)
+    {
+        const string template =
             "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}{Exception}";
 
-        Log.Logger = new LoggerConfiguration()
+        return new LoggerConfiguration()
             .MinimumLevel.Is(level)
             .Enrich.FromLogContext()
             .WriteTo.Debug(outputTemplate: template)
@@ -34,20 +60,7 @@ public static class LoggingService
                 outputTemplate: template,
                 shared: true)
             .CreateLogger();
-
-        Log.Information("Logging initialized at level {Level}. Log directory: {Dir}",
-            level, LogDirectory);
     }
-
-    /// <summary>Reapply a new minimum level without restarting the app.</summary>
-    public static void SetLevel(string levelText)
-    {
-        Log.Information("Reinitializing logger at new level: {Level}", levelText);
-        Log.CloseAndFlush();
-        Initialize(levelText);
-    }
-
-    public static void Shutdown() => Log.CloseAndFlush();
 
     private static LogEventLevel ParseLevel(string text) =>
         Enum.TryParse<LogEventLevel>(text, ignoreCase: true, out var lvl)

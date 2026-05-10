@@ -8,11 +8,34 @@
 - [x] **Phase 3c** — Parallel small-file copies (default 4, threshold 10 MiB).
 - [x] **Phase 3d** — Win32 `IFileOpenDialog` pickers (replaces WinRT pickers).
 - [x] **Phase 4 (tests + CI)** — xUnit project (15 tests, all green), GitHub Actions workflow.
+- [x] **Phase 5 (launch + UI/JSON polish)** — `WindowsPackageType=None` bakes
+      Bootstrap auto-init into plain `dotnet build` (fixes
+      REGDB_E_CLASSNOTREG); MainWindow ScrollViewer + 720×560 MinSize +
+      compact header/drop-hint/status row + F5/F6/Esc accelerators;
+      `SettingsService` switched to System.Text.Json source-gen
+      (`AppSettingsJsonContext`) — kills IL2026 trim warnings and speeds up
+      load/save; defensive logging in `App.xaml.cs` startup catch and a
+      build-then-swap `LoggingService.SetLevel`.
 
 ## Deferred / opt-in
 - [ ] Full MVVM refactor (`MainViewModel`, `RelayCommand`, `IFileSystem` for `CopyEngine`). Invasive, no user-visible benefit.
 
 ## Resolved issues (kept for history)
+- [Fixed] `dotnet build` output crashed with `REGDB_E_CLASSNOTREG` (0x80040154)
+  from `DeploymentManager.AutoInitialize` — packaged-app build skipped the
+  Bootstrapper. Fixed by setting `<WindowsPackageType>None</WindowsPackageType>`
+  in the csproj so plain `dotnet build` produces an unpackaged .exe with
+  Bootstrap auto-init wired up.
+- [Fixed] Drop zone clipped + oversized title at low window resolutions —
+  body wrapped in `ScrollViewer`, header switched to `SubtitleTextBlockStyle`,
+  drop watermark 96→56, padding tightened, 720×560 minimum window size.
+- [Fixed] IL2026 trim-analysis warnings on `JsonSerializer` calls under
+  `PublishTrimmed=true` — `SettingsService` now uses a source-generated
+  `AppSettingsJsonContext`.
+- [Fixed] `LoggingService.SetLevel` could disable logging on transient failure
+  — refactored to build new logger first, swap, then dispose old.
+- [Fixed] `App.xaml.cs` startup catch silently swallowed init failures —
+  now writes to `Debug.WriteLine` and best-effort `Log.Error`.
 - [Mitigated] Tool wouldn't launch via double-click — fixed by self-contained publish flags + Windows App SDK self-contained.
 - [Mitigated] Drop area didn't show queued items / completion state — replaced with bound ListView and `ItemStatus` icons.
 - [Mitigated] Progress bar didn't reflect per-file progress — fixed by reporting bytes from inside the copy loop.

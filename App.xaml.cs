@@ -51,9 +51,14 @@ namespace RoboCopyGUI
                 NotificationService.Initialize();
                 Log.Information("RoboCopyGUI starting. Base dir: {BaseDir}", AppContext.BaseDirectory);
             }
-            catch
+            catch (Exception ex)
             {
-                // Never let logging/settings init crash the app launch.
+                // Never let logging/settings init crash the app launch, but don't swallow
+                // silently either — surface to the debugger and to whatever logger may
+                // have been created before the failure.
+                System.Diagnostics.Debug.WriteLine($"[RoboCopyGUI] Startup init failed: {ex}");
+                try { Log.Error(ex, "Startup init failed (logging/settings/notifications)."); }
+                catch { /* logger may itself be the culprit */ }
             }
 
             InitializeComponent();
