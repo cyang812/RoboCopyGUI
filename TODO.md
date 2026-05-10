@@ -17,8 +17,44 @@
       load/save; defensive logging in `App.xaml.cs` startup catch and a
       build-then-swap `LoggingService.SetLevel`.
 
+## Next version (planned) — Phase 6
+
+See `ideas.md` for the full backlog. Items selected for the next release:
+
+- [ ] **Dynamic copy queue** — let the queue mutate at any time, including
+      during an active copy.
+  - Add a per-item "Remove" affordance (small ✕ button or right-click
+    "Remove from queue") that's enabled only while the item's status is
+    `Queued`.
+  - Allow drag-drop and the Add files / Add folder buttons to keep working
+    while a copy is running. New items append to the live queue and are
+    picked up by the engine on the next iteration.
+  - New `ItemStatus.Removed` for items the user removed before they
+    started, so the engine skips them cleanly.
+  - `CopyEngine.RunAsync` switches from a `foreach` snapshot to an indexed
+    loop that re-reads `items.Count` and `items[i].Status` each iteration
+    (with thread-safe access via `DispatcherQueue.TryEnqueue` or a lock).
+    Preflight total bytes becomes a moving target; the engine should emit
+    running-total updates instead of treating the total as fixed.
+  - Tests: add `FakeCopyItem` scenarios for "add during run" and
+    "remove pending mid-run".
+- [ ] **Self-update checker** (idea #15) — query GitHub Releases API on
+      launch; show an unobtrusive `InfoBar` if a newer version exists.
+      Settings toggle to opt out.
+- [ ] **Crash dump on unhandled exception** (idea #16) — hook
+      `AppDomain.UnhandledException` and
+      `TaskScheduler.UnobservedTaskException`, write a minidump via
+      `MiniDumpWriteDump` P/Invoke to `crashes/<timestamp>.dmp` (capped
+      at 5, LRU cleanup).
+- [ ] **`IFileSystem` abstraction in `CopyEngine`** (idea #19) — extract
+      the file-system surface (Open / Create / Move / Delete / Exists /
+      Enumerate / GetLastWriteTimeUtc / GetSize) behind an interface so
+      the engine becomes mockable in tests. Required runway for several
+      future features (verify-after-copy, resume, filters).
+
 ## Deferred / opt-in
-- [ ] Full MVVM refactor (`MainViewModel`, `RelayCommand`, `IFileSystem` for `CopyEngine`). Invasive, no user-visible benefit.
+- [ ] Full MVVM refactor (`MainViewModel`, `RelayCommand`). Invasive, no user-visible benefit.
+  - Note: the `IFileSystem` half of this is now scheduled for Phase 6 (above) on its own merits.
 
 ## Resolved issues (kept for history)
 - [Fixed] `dotnet build` output crashed with `REGDB_E_CLASSNOTREG` (0x80040154)
