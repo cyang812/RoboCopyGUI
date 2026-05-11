@@ -11,6 +11,17 @@
     <UseWinUI>true</UseWinUI>
     <WinUISDKReferences>false</WinUISDKReferences>
     <EnableMsixTooling>true</EnableMsixTooling>
+    <!--
+      Default to an unpackaged (loose-files) build so a plain `dotnet build`
+      produces a runnable .exe that uses the WindowsAppSDK Bootstrapper
+      auto-init. Without this, the build emits an AppxManifest.xml and skips
+      Bootstrap auto-init, causing REGDB_E_CLASSNOTREG (0x80040154) at startup
+      when the .exe is launched directly. This matches how CI publishes and
+      how the app is intended to ship (see README "WinUI 3 unpackaged app").
+      Override on the command line with `-p:WindowsPackageType=Msix` if you
+      ever need to produce an MSIX packaged build.
+    -->
+    <WindowsPackageType>None</WindowsPackageType>
     <Nullable>enable</Nullable>
     <!--
       Drop satellite resource folders for languages we don't ship. The Windows App SDK

@@ -15,7 +15,7 @@
              ExtendsContentIntoTitleBar=true is set in code-behind. -->
         <Grid x:Name="AppTitleBar"
               Grid.Row="0"
-              Height="36"
+              Height="32"
               Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
               ColumnDefinitions="Auto, *, Auto">
             <FontIcon Glyph="&#xE8B7;"
@@ -32,15 +32,19 @@
             <!-- right column reserved by Windows for the min/max/close caption buttons -->
         </Grid>
 
-        <Grid Grid.Row="1"
-              Padding="30"
-              RowDefinitions="Auto, *, Auto, Auto, Auto">
+        <!-- Body: scroll vertically when window is shorter than content so nothing
+             gets clipped at low resolutions. -->
+        <ScrollViewer Grid.Row="1"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      Padding="20,12,20,16">
+            <Grid RowDefinitions="Auto, *, Auto, Auto, Auto"
+                  MinHeight="420">
 
             <StackPanel Grid.Row="0"
-                        Margin="0,0,0,20">
+                        Margin="0,0,0,12">
                 <TextBlock Text="File Transfer Utility"
-                           Style="{StaticResource TitleTextBlockStyle}"
-                           FontWeight="Bold"/>
+                           Style="{StaticResource SubtitleTextBlockStyle}"/>
                 <TextBlock Text="Drag and drop sources and select a destination."
                            Style="{StaticResource CaptionTextBlockStyle}"
                            Opacity="0.7"/>
@@ -48,6 +52,7 @@
 
             <Border x:Name="DropArea"
                     Grid.Row="1"
+                    MinHeight="160"
                     Background="Transparent"
                     BorderBrush="{ThemeResource SystemControlDisabledAccentConfigurableBrush}"
                     BorderThickness="2"
@@ -94,29 +99,25 @@
                     </ListView>
 
                     <!-- Layer 2: drop hint, on top, hit-test invisible so the list still
-                         receives clicks. Visible only when the queue is empty. -->
+                         receives clicks. Collapsed (not just dimmed) once the queue has
+                         items so it doesn't reserve vertical space at low resolutions. -->
                     <StackPanel x:Name="DropHintPanel"
                                 Grid.Row="0"
                                 VerticalAlignment="Center"
                                 HorizontalAlignment="Center"
-                                Spacing="14"
-                                IsHitTestVisible="False"
-                                Opacity="1.0">
+                                Spacing="8"
+                                IsHitTestVisible="False">
                         <FontIcon Glyph="&#xE8B7;"
-                                  FontSize="96"
+                                  FontSize="56"
                                   Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
                         <TextBlock Text="Drop Files or Folders Here"
-                                   FontSize="22"
+                                   FontSize="16"
                                    FontWeight="SemiBold"
-                                   HorizontalAlignment="Center"/>
-                        <TextBlock x:Name="FileCountText"
-                                   Text="0 items selected"
-                                   FontSize="14"
                                    HorizontalAlignment="Center"/>
                     </StackPanel>
 
                     <Grid Grid.Row="1"
-                          Margin="0,12,0,0"
+                          Margin="0,8,0,0"
                           ColumnDefinitions="Auto, Auto, *, Auto">
                         <Button x:Name="AddFilesBtn"
                                 Content="Add Files…"
@@ -135,8 +136,8 @@
             </Border>
 
             <StackPanel Grid.Row="2"
-                        Margin="0,20,0,0"
-                        Spacing="10">
+                        Margin="0,16,0,0"
+                        Spacing="8">
                 <TextBlock Text="Destination Path"
                            Style="{StaticResource BodyStrongTextBlockStyle}"/>
                 <Grid ColumnDefinitions="*, Auto">
@@ -159,7 +160,8 @@
                           Checked="DeleteSourceCheck_Changed"
                           Unchecked="DeleteSourceCheck_Changed"/>
 
-                <Grid ColumnDefinitions="Auto, Auto, Auto"
+                <!-- Three notification toggles. -->
+                <Grid ColumnDefinitions="Auto, Auto, *"
                       ColumnSpacing="20">
                     <CheckBox x:Name="NotifyOnDoneCheck"
                               Content="Toast on completion"
@@ -193,7 +195,8 @@
                     <TextBlock Grid.Column="2"
                                Text="(1 = sequential. Threshold: 10 MiB)"
                                Foreground="{ThemeResource SystemControlPlaceholderTextForegroundBrush}"
-                               VerticalAlignment="Center"/>
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"/>
                 </Grid>
 
                 <Grid ColumnDefinitions="Auto, *"
@@ -217,12 +220,22 @@
             </StackPanel>
 
             <StackPanel Grid.Row="3"
-                        Margin="0,20,0,20"
-                        Spacing="6">
-                <TextBlock x:Name="StatusText"
-                           Text="Ready"
-                           Style="{StaticResource CaptionTextBlockStyle}"
-                           Foreground="{ThemeResource SystemControlPlaceholderTextForegroundBrush}"/>
+                        Margin="0,12,0,12"
+                        Spacing="4">
+                <Grid ColumnDefinitions="*, Auto">
+                    <TextBlock x:Name="StatusText"
+                               Text="Ready"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource SystemControlPlaceholderTextForegroundBrush}"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="OverallProgressText"
+                               Grid.Column="1"
+                               Text=""
+                               Margin="10,0,0,0"
+                               VerticalAlignment="Center"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource SystemControlPlaceholderTextForegroundBrush}"/>
+                </Grid>
                 <TextBlock x:Name="NetText"
                            Text=""
                            Style="{StaticResource CaptionTextBlockStyle}"
@@ -233,25 +246,15 @@
                              Maximum="100"
                              Value="0"
                              IsIndeterminate="False"
-                             Height="6"
+                             Height="4"
                              ToolTipService.ToolTip="Current file"/>
-                <Grid ColumnDefinitions="*, Auto"
-                      Margin="0,4,0,0">
-                    <ProgressBar x:Name="OverallProgressBar"
-                                 Minimum="0"
-                                 Maximum="100"
-                                 Value="0"
-                                 IsIndeterminate="False"
-                                 Height="10"
-                                 ToolTipService.ToolTip="Overall progress"/>
-                    <TextBlock x:Name="OverallProgressText"
-                               Grid.Column="1"
-                               Text=""
-                               Margin="10,0,0,0"
-                               VerticalAlignment="Center"
-                               Style="{StaticResource CaptionTextBlockStyle}"
-                               Foreground="{ThemeResource SystemControlPlaceholderTextForegroundBrush}"/>
-                </Grid>
+                <ProgressBar x:Name="OverallProgressBar"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"
+                             IsIndeterminate="False"
+                             Height="8"
+                             ToolTipService.ToolTip="Overall progress"/>
             </StackPanel>
 
             <Grid Grid.Row="4"
@@ -271,21 +274,37 @@
                             Content="Start Copy"
                             Click="StartBtn_Click"
                             Style="{StaticResource AccentButtonStyle}"
-                            Width="100"/>
+                            ToolTipService.ToolTip="Start (F5)"
+                            Width="100">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="F5"/>
+                        </Button.KeyboardAccelerators>
+                    </Button>
                     <Button x:Name="PauseBtn"
                             Content="Pause"
                             Click="PauseBtn_Click"
                             IsEnabled="False"
-                            Width="100"/>
+                            ToolTipService.ToolTip="Pause / Resume (F6)"
+                            Width="100">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="F6"/>
+                        </Button.KeyboardAccelerators>
+                    </Button>
                     <Button x:Name="CancelBtn"
                             Content="Cancel"
                             Click="CancelBtn_Click"
                             IsEnabled="False"
-                            Width="100"/>
+                            ToolTipService.ToolTip="Cancel (Esc)"
+                            Width="100">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="Escape"/>
+                        </Button.KeyboardAccelerators>
+                    </Button>
                 </StackPanel>
             </Grid>
 
-        </Grid>
+            </Grid>
+        </ScrollViewer>
         <!-- /body grid -->
 
     </Grid>

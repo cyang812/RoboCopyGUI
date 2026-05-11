@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Serilog;
 
 namespace RoboCopyGUI.Services;
@@ -11,12 +12,6 @@ namespace RoboCopyGUI.Services;
 /// </summary>
 public static class SettingsService
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
-
     /// <summary>Absolute path to settings.json beside the .exe.</summary>
     public static string SettingsPath { get; } =
         Path.Combine(AppContext.BaseDirectory, "settings.json");
@@ -32,7 +27,7 @@ public static class SettingsService
             }
 
             string json = File.ReadAllText(SettingsPath);
-            AppSettings? loaded = JsonSerializer.Deserialize<AppSettings>(json, JsonOpts);
+            AppSettings? loaded = JsonSerializer.Deserialize(json, AppSettingsJsonContext.Default.AppSettings);
             if (loaded is null)
             {
                 Log.Warning("Settings file at {Path} deserialized to null; using defaults.", SettingsPath);
@@ -53,7 +48,7 @@ public static class SettingsService
     {
         try
         {
-            string json = JsonSerializer.Serialize(settings, JsonOpts);
+            string json = JsonSerializer.Serialize(settings, AppSettingsJsonContext.Default.AppSettings);
             File.WriteAllText(SettingsPath, json);
             Log.Debug("Saved settings to {Path}.", SettingsPath);
         }
@@ -62,4 +57,17 @@ public static class SettingsService
             Log.Warning(ex, "Failed to save settings to {Path}.", SettingsPath);
         }
     }
+}
+
+/// <summary>
+/// Compile-time-generated, trim-safe (and faster) serializer metadata for
+/// <see cref="AppSettings"/>. Replaces the reflection-based JsonSerializer overloads
+/// that emitted IL2026 trim-analysis warnings under PublishTrimmed.
+/// </summary>
+[JsonSourceGenerationOptions(
+    WriteIndented = true,
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(AppSettings))]
+internal partial class AppSettingsJsonContext : JsonSerializerContext
+{
 }
