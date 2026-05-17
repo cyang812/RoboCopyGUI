@@ -21,7 +21,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
@@ -44,7 +44,7 @@ jobs:
           - rid: win-arm64
             platform: ARM64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
@@ -94,7 +94,7 @@ jobs:
     permissions:
       contents: write    # required for softprops/action-gh-release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
