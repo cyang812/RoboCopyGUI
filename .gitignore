@@ -50,3 +50,6 @@ _pkginfo.txt
 
 # Other
 *.log
+
+# Crash dumps emitted by CrashDumpService (Phase 6 idea #16)
+crashes/

@@ -52,11 +52,20 @@ See `ideas.md` for the full backlog. Items selected for the next release:
 - [ ] **Self-update checker** (idea #15) — query GitHub Releases API on
       launch; show an unobtrusive `InfoBar` if a newer version exists.
       Settings toggle to opt out.
-- [ ] **Crash dump on unhandled exception** (idea #16) — hook
+- [x] **Crash dump on unhandled exception** (idea #16) — hook
       `AppDomain.UnhandledException` and
       `TaskScheduler.UnobservedTaskException`, write a minidump via
       `MiniDumpWriteDump` P/Invoke to `crashes/<timestamp>.dmp` (capped
       at 5, LRU cleanup).
+      _Done: `Services/CrashDumpService.cs` installs both handlers plus
+      WinUI's `Application.UnhandledException` from `App.xaml.cs`. Each
+      crash produces a `.dmp` (via `dbghelp!MiniDumpWriteDump`) and a
+      readable `.txt` sidecar with the full exception text. `crashes/`
+      lives next to the exe and is capped at 5 dumps via LRU eviction
+      that also cleans companion sidecars. Reentrant handlers can't
+      throw (all paths wrapped in try/catch). 10 new tests cover
+      filename format, LRU math (including sidecar cleanup, missing-dir
+      noop, non-dump file isolation), and end-to-end sidecar contents._
 - [x] **`IFileSystem` abstraction in `CopyEngine`** (idea #19) — extract
       the file-system surface (Open / Create / Move / Delete / Exists /
       Enumerate / GetLastWriteTimeUtc / GetSize) behind an interface so
