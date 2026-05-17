@@ -54,17 +54,6 @@
 ### Native pickers
 - Replaced WinRT `FolderPicker` / `FileOpenPicker` with **Win32 `IFileOpenDialog`** — fixes the "Select" grayed-out bug, the cross-MRU contamination between source/dest pickers, and the "interpret leaf as child" bug when re-opening a previously chosen folder.
 
-## Screenshots
-
-> Placeholders — see [`docs/screenshots/HOW_TO_CAPTURE.md`](docs/screenshots/HOW_TO_CAPTURE.md)
-> for the recipe. Drop a PNG with the matching filename into
-> `docs/screenshots/` and the links below start rendering automatically.
-
-<p align="center">
-  <img src="docs/screenshots/mainwindow-light.png" alt="Main window (Light theme)" width="48%">
-  <img src="docs/screenshots/mainwindow-dark.png"  alt="Main window (Dark theme)"  width="48%">
-</p>
-
 ## Project layout
 
 ```
