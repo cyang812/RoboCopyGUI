@@ -29,4 +29,10 @@ public enum ItemStatus
     Done,
     Failed,
     Skipped,
+    /// <summary>
+    /// The user removed this item from the queue before the engine started copying it.
+    /// The engine treats <see cref="Removed"/> like a no-op (no bytes counted, no copy
+    /// attempted) and reports the count separately in <c>CopyTotals.Removed</c>.
+    /// </summary>
+    Removed,
 }

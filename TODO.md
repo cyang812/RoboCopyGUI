@@ -21,7 +21,7 @@
 
 See `ideas.md` for the full backlog. Items selected for the next release:
 
-- [ ] **Dynamic copy queue** — let the queue mutate at any time, including
+- [x] **Dynamic copy queue** — let the queue mutate at any time, including
       during an active copy.
   - Add a per-item "Remove" affordance (small ✕ button or right-click
     "Remove from queue") that's enabled only while the item's status is
@@ -38,6 +38,17 @@ See `ideas.md` for the full backlog. Items selected for the next release:
     running-total updates instead of treating the total as fixed.
   - Tests: add `FakeCopyItem` scenarios for "add during run" and
     "remove pending mid-run".
+  _Done: `CopyEngine` owns a live queue with explicit `AddItem` /
+  `TryRemovePending` / `Snapshot` / `GetStatus` APIs. The engine tracks
+  per-item state under its own lock (decoupled from the UI's async
+  dispatch), uses an outer batched loop that picks up newly-added items
+  on each iteration, computes a live denominator that grows/shrinks as
+  items are added/removed, and reports `CopyTotals.Removed` separately.
+  Each engine instance is one-shot (`InvalidOperationException` on
+  re-use). MainWindow keeps Add/Drop enabled during copy and adds a
+  per-row Remove (✕) button bound to `SourceItem.RemoveVisibility`.
+  12 new tests cover add/remove flows, idempotency, snapshot ordering,
+  live-denominator math, and the single-run guard._
 - [ ] **Self-update checker** (idea #15) — query GitHub Releases API on
       launch; show an unobtrusive `InfoBar` if a newer version exists.
       Settings toggle to opt out.

@@ -43,6 +43,14 @@ public sealed class CopyTotals
     public int Done { get; set; }
     public int Failed { get; set; }
     public int Skipped { get; set; }
+
+    /// <summary>
+    /// Items the user removed from the queue (via <see cref="CopyEngine.TryRemovePending"/>)
+    /// before the engine started copying them. Counted separately from Skipped so the
+    /// summary line can distinguish "I asked the engine to skip these" from "the user
+    /// changed their mind".
+    /// </summary>
+    public int Removed { get; set; }
 }
 
 /// <summary>Live progress payload pushed by the engine.</summary>
@@ -71,6 +79,21 @@ public sealed class CopyEngine
 
     private readonly PauseTokenSource _pause;
     private readonly IFileSystem _fs;
+
+    // ---- live queue state -------------------------------------------------
+    // All access to _queue / _state / _itemSizes / _completedBytes is serialized
+    // through _lock. The lock is held only briefly (queue mutation + status
+    // transitions); long work (Preflight measurement, actual I/O) runs outside it.
+    // Locks are NEVER held while invoking Progress, item.SetStatus, or other
+    // callbacks — that prevents deadlocks and re-entrancy.
+    private readonly object _lock = new();
+    private readonly List<ICopyItem> _queue = new();
+    private readonly Dictionary<ICopyItem, ItemStatus> _state =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<ICopyItem, long> _itemSizes =
+        new(ReferenceEqualityComparer.Instance);
+    private long _completedBytes;
+    private bool _hasRun;
 
     public CopyEngine(PauseTokenSource pause, IFileSystem? fs = null)
     {
@@ -102,60 +125,188 @@ public sealed class CopyEngine
         foreach (var item in items)
         {
             token.ThrowIfCancellationRequested();
-            try
-            {
-                if (fs.DirectoryExists(item.Path))
-                {
-                    foreach (var f in fs.EnumerateFiles(item.Path, recurse: true))
-                    {
-                        token.ThrowIfCancellationRequested();
-                        try { total += fs.GetFileSize(f); }
-                        catch { /* unreadable file — skip */ }
-                    }
-                }
-                else if (fs.FileExists(item.Path))
-                {
-                    total += fs.GetFileSize(item.Path);
-                }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                Log.Debug(ex, "Preflight could not size {Path}", item.Path);
-            }
+            total += MeasureItemSize(item, fs, token);
         }
         return total;
     }
 
+    private static long MeasureItemSize(ICopyItem item, IFileSystem fs, CancellationToken token)
+    {
+        try
+        {
+            if (fs.DirectoryExists(item.Path))
+            {
+                long sum = 0;
+                foreach (var f in fs.EnumerateFiles(item.Path, recurse: true))
+                {
+                    token.ThrowIfCancellationRequested();
+                    try { sum += fs.GetFileSize(f); }
+                    catch { /* unreadable file — skip */ }
+                }
+                return sum;
+            }
+            if (fs.FileExists(item.Path))
+            {
+                return fs.GetFileSize(item.Path);
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Preflight could not size {Path}", item.Path);
+        }
+        return 0;
+    }
+
+    // ---- dynamic queue API ------------------------------------------------
+
+    /// <summary>
+    /// Add an item to the live queue. Safe to call at any time — including
+    /// while <see cref="RunAsync"/> is executing. The engine picks the new
+    /// item up on its next outer-loop iteration. Idempotent for the same
+    /// item reference. Notifies the item with <see cref="ItemStatus.Queued"/>.
+    /// </summary>
+    public void AddItem(ICopyItem item)
+    {
+        if (item is null) throw new ArgumentNullException(nameof(item));
+        bool added;
+        lock (_lock)
+        {
+            if (_state.ContainsKey(item)) { added = false; }
+            else
+            {
+                _queue.Add(item);
+                _state[item] = ItemStatus.Queued;
+                added = true;
+            }
+        }
+        if (added) item.SetStatus(ItemStatus.Queued);
+    }
+
+    /// <summary>
+    /// Atomically mark a still-pending item as <see cref="ItemStatus.Removed"/>
+    /// so the engine skips it. Returns <c>true</c> if the item was found in
+    /// <see cref="ItemStatus.Queued"/> state and successfully removed; <c>false</c>
+    /// if the item is unknown OR has already advanced past Queued (already
+    /// InProgress / Done / Failed / Skipped / Removed). The latter is the
+    /// expected "user clicked Remove just as the file started copying" race.
+    /// </summary>
+    public bool TryRemovePending(ICopyItem item)
+    {
+        if (item is null) throw new ArgumentNullException(nameof(item));
+        bool removed;
+        lock (_lock)
+        {
+            removed = _state.TryGetValue(item, out var s) && s == ItemStatus.Queued;
+            if (removed) _state[item] = ItemStatus.Removed;
+        }
+        if (removed) item.SetStatus(ItemStatus.Removed);
+        return removed;
+    }
+
+    /// <summary>
+    /// Snapshot of items currently in the engine's queue, in insertion order.
+    /// Each item's <see cref="GetStatus"/> reflects the engine's view at call time.
+    /// </summary>
+    public IReadOnlyList<ICopyItem> Snapshot()
+    {
+        lock (_lock) return _queue.ToArray();
+    }
+
+    /// <summary>Engine's authoritative status for <paramref name="item"/>, or null if unknown.</summary>
+    public ItemStatus? GetStatus(ICopyItem item)
+    {
+        lock (_lock) return _state.TryGetValue(item, out var s) ? s : null;
+    }
+
+    // Atomic Queued -> InProgress transition. Returns false if item was Removed
+    // (or otherwise no longer Queued) between batch snapshot and worker start.
+    private bool TryClaimItem(ICopyItem item)
+    {
+        lock (_lock)
+        {
+            if (_state.TryGetValue(item, out var s) && s == ItemStatus.Queued)
+            {
+                _state[item] = ItemStatus.InProgress;
+                return true;
+            }
+            return false;
+        }
+    }
+
+    // Roll back InProgress -> Queued on cancellation so a future Resume picks it up.
+    private void RewindToQueued(ICopyItem item)
+    {
+        lock (_lock)
+        {
+            if (_state.TryGetValue(item, out var s) && s == ItemStatus.InProgress)
+                _state[item] = ItemStatus.Queued;
+        }
+    }
+
+    private void SetItemStatus(ICopyItem item, ItemStatus s, string? error = null)
+    {
+        lock (_lock) _state[item] = s;
+        item.SetStatus(s, error);
+    }
+
+    // Sum of bytes the engine still expects to transfer: completed + everything
+    // still Queued or InProgress. Removed/Failed/Skipped items drop out naturally,
+    // so the live denominator shrinks when the user removes a pending item.
+    // Caller must hold _lock.
+    private long ComputeOverallTotalLocked()
+    {
+        long pending = 0;
+        foreach (var item in _queue)
+        {
+            if (!_state.TryGetValue(item, out var s)) continue;
+            if (s == ItemStatus.Queued || s == ItemStatus.InProgress)
+            {
+                if (_itemSizes.TryGetValue(item, out var b)) pending += b;
+            }
+        }
+        return Interlocked.Read(ref _completedBytes) + pending;
+    }
+
     public async Task<CopyTotals> RunAsync(
-        IList<ICopyItem> items,
+        IEnumerable<ICopyItem> initialItems,
         CopyOptions options,
         CancellationToken token)
     {
-        var totals = new CopyTotals();
-        if (items.Count == 0) return totals;
+        if (initialItems is null) throw new ArgumentNullException(nameof(initialItems));
+        lock (_lock)
+        {
+            if (_hasRun) throw new InvalidOperationException(
+                "CopyEngine has already been used; create a new instance per copy run.");
+            _hasRun = true;
+        }
 
-        long totalQueueBytes = Preflight(items, _fs, token);
+        foreach (var item in initialItems) AddItem(item);
+
+        var totals = new CopyTotals();
         var overall = Stopwatch.StartNew();
 
-        // Throttled, rolling speed counter shared across all files in this run.
-        // overallBytes is mutated from multiple worker tasks during parallel small-file
-        // copies, so we touch it through Interlocked / the gate lock below.
+        // Throttled, rolling speed counter. The current-file's partial bytes are
+        // captured in `copied`; the cross-run completed count lives in _completedBytes
+        // so AddItem / TryRemovePending can compute a live denominator from another thread.
         var lastTick = Stopwatch.StartNew();
         long bytesAtLastTick = 0;
-        long overallBytes = 0;
         string currentName = string.Empty;
         double smoothedMBps = 0;
         var reportLock = new object();
 
         void Report(long copied, long total, bool force)
         {
+            CopyProgress? payload = null;
             lock (reportLock)
             {
                 if (!force && lastTick.ElapsedMilliseconds < ProgressUpdateIntervalMs) return;
 
                 long ms = Math.Max(1, lastTick.ElapsedMilliseconds);
-                long copiedOverall = Interlocked.Read(ref overallBytes) + copied;
+                long completed = Interlocked.Read(ref _completedBytes);
+                long copiedOverall = completed + copied;
+                long totalQueueBytes;
+                lock (_lock) totalQueueBytes = ComputeOverallTotalLocked();
                 long delta = copiedOverall - bytesAtLastTick;
                 double mbps = delta / 1024.0 / 1024.0 * 1000.0 / ms;
                 bytesAtLastTick = copiedOverall;
@@ -172,161 +323,221 @@ public sealed class CopyEngine
                     eta = TimeSpan.FromSeconds(Math.Min(seconds, TimeSpan.MaxValue.TotalSeconds - 1));
                 }
 
-                Progress?.Invoke(new CopyProgress(
+                payload = new CopyProgress(
                     currentName,
                     copied, total,
                     mbps,
                     copiedOverall, totalQueueBytes,
-                    eta));
+                    eta);
             }
+            // Invoke Progress OUTSIDE both locks so a re-entrant handler (or one
+            // that takes a UI lock) can't deadlock with the engine.
+            if (payload is not null) Progress?.Invoke(payload);
         }
 
-        // Split the top-level queue into "small" files (eligible for parallel copy)
-        // and everything else (directories + large files). Large files keep the
-        // sequential, pipelined path so the network pipe isn't fragmented.
-        bool parallelEnabled = options.MaxParallelSmallFiles > 1;
-        var smallTopLevel = new List<ICopyItem>();
-        var sequentialTopLevel = new List<ICopyItem>();
-        if (parallelEnabled)
+        try
         {
-            foreach (var item in items)
+            // Outer loop: each iteration drains the current set of Queued items.
+            // New items added (via AddItem) between iterations are picked up
+            // automatically by the next snapshot. Items removed (via
+            // TryRemovePending) drop out before we get to them.
+            while (true)
             {
-                if (_fs.FileExists(item.Path))
+                token.ThrowIfCancellationRequested();
+                await _pause.WaitWhilePausedAsync(token).ConfigureAwait(false);
+
+                // Step 1: pick up any new Queued items we haven't measured yet.
+                ICopyItem[] toMeasure;
+                lock (_lock)
                 {
-                    long len;
-                    try { len = _fs.GetFileSize(item.Path); }
-                    catch { len = long.MaxValue; }
-                    if (len <= options.SmallFileThresholdBytes)
+                    toMeasure = _queue
+                        .Where(i => _state[i] == ItemStatus.Queued && !_itemSizes.ContainsKey(i))
+                        .ToArray();
+                }
+
+                // Step 2: measure them OUTSIDE the lock — a freshly-dropped 50k-file
+                // directory would otherwise block AddItem / TryRemovePending.
+                var measured = new Dictionary<ICopyItem, long>(ReferenceEqualityComparer.Instance);
+                foreach (var item in toMeasure)
+                {
+                    token.ThrowIfCancellationRequested();
+                    measured[item] = MeasureItemSize(item, _fs, token);
+                }
+
+                // Step 3: re-enter the lock, cache sizes, snapshot the batch.
+                ICopyItem[] batch;
+                lock (_lock)
+                {
+                    foreach (var kv in measured)
+                        if (!_itemSizes.ContainsKey(kv.Key))
+                            _itemSizes[kv.Key] = kv.Value;
+                    batch = _queue.Where(i => _state[i] == ItemStatus.Queued).ToArray();
+                }
+
+                if (batch.Length == 0) break;
+
+                // Step 4: classify the batch into small (parallel-eligible) vs
+                // sequential (large files + directories). Uses the cached size
+                // so we don't hit the FS twice.
+                bool parallelEnabled = options.MaxParallelSmallFiles > 1;
+                var smallTopLevel = new List<ICopyItem>();
+                var sequentialTopLevel = new List<ICopyItem>();
+                if (parallelEnabled)
+                {
+                    foreach (var item in batch)
                     {
-                        smallTopLevel.Add(item);
-                        continue;
+                        long len;
+                        lock (_lock)
+                            len = _itemSizes.TryGetValue(item, out var b) ? b : long.MaxValue;
+                        if (_fs.FileExists(item.Path) && len <= options.SmallFileThresholdBytes)
+                            smallTopLevel.Add(item);
+                        else
+                            sequentialTopLevel.Add(item);
                     }
                 }
-                sequentialTopLevel.Add(item);
-            }
-        }
-        else
-        {
-            sequentialTopLevel.AddRange(items);
-        }
+                else
+                {
+                    sequentialTopLevel.AddRange(batch);
+                }
 
-        // Phase A: parallel pass over small top-level files.
-        if (smallTopLevel.Count > 0)
-        {
-            await Parallel.ForEachAsync(
-                smallTopLevel,
-                new ParallelOptions
+                // Phase A: parallel pass over small top-level files.
+                if (smallTopLevel.Count > 0)
                 {
-                    CancellationToken = token,
-                    MaxDegreeOfParallelism = Math.Min(options.MaxParallelSmallFiles, smallTopLevel.Count),
-                },
-                async (item, ct) =>
+                    await Parallel.ForEachAsync(
+                        smallTopLevel,
+                        new ParallelOptions
+                        {
+                            CancellationToken = token,
+                            MaxDegreeOfParallelism = Math.Min(options.MaxParallelSmallFiles, smallTopLevel.Count),
+                        },
+                        async (item, ct) =>
+                        {
+                            await _pause.WaitWhilePausedAsync(ct).ConfigureAwait(false);
+                            // Atomic Queued -> InProgress (user may have Removed
+                            // since the batch was snapshotted; in that case skip).
+                            if (!TryClaimItem(item)) return;
+                            item.SetStatus(ItemStatus.InProgress);
+                            string name = Path.GetFileName(item.Path);
+                            try
+                            {
+                                string destFile = Path.Combine(options.Destination, name);
+                                var r = await CopyOneFileAsync(item.Path, destFile, options, ct,
+                                    // No per-buffer reporting in parallel: we'd interleave names. Just
+                                    // refresh the displayed name so the user sees what's flowing.
+                                    (_, _, _) => { lock (reportLock) currentName = name; }
+                                ).ConfigureAwait(false);
+                                Interlocked.Add(ref _completedBytes, r.Bytes);
+                                lock (reportLock) { totals.TotalBytes += r.Bytes; if (r.Skipped) totals.Skipped++; else totals.Done++; }
+                                SetItemStatus(item, r.Skipped ? ItemStatus.Skipped : ItemStatus.Done);
+                                Report(0, 0, force: true);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                RewindToQueued(item);
+                                item.SetStatus(ItemStatus.Queued);
+                                throw;
+                            }
+                            catch (Exception ex)
+                            {
+                                lock (reportLock) totals.Failed++;
+                                SetItemStatus(item, ItemStatus.Failed, ex.Message);
+                                Log.Error(ex, "Failed to copy {Path}", item.Path);
+                            }
+                        }).ConfigureAwait(false);
+                }
+
+                // Phase B: sequential pass over directories + large files. This is the
+                // original pipelined path; inside a directory we may still parallelize
+                // *small* files belonging to that tree (CopyDirectoryAsync handles that).
+                foreach (var item in sequentialTopLevel)
                 {
-                    await _pause.WaitWhilePausedAsync(ct).ConfigureAwait(false);
+                    token.ThrowIfCancellationRequested();
+                    await _pause.WaitWhilePausedAsync(token).ConfigureAwait(false);
+
+                    if (!TryClaimItem(item)) continue;
                     item.SetStatus(ItemStatus.InProgress);
-                    string name = Path.GetFileName(item.Path);
+                    lock (reportLock) currentName = Path.GetFileName(item.Path);
+
                     try
                     {
-                        string destFile = Path.Combine(options.Destination, name);
-                        var r = await CopyOneFileAsync(item.Path, destFile, options, ct,
-                            // No per-buffer reporting in parallel: we'd interleave names. Just
-                            // refresh the displayed name so the user sees what's flowing.
-                            (_, _, _) => { lock (reportLock) currentName = name; }
-                        ).ConfigureAwait(false);
-                        Interlocked.Add(ref overallBytes, r.Bytes);
-                        lock (reportLock) { totals.TotalBytes += r.Bytes; if (r.Skipped) totals.Skipped++; else totals.Done++; }
-                        item.SetStatus(r.Skipped ? ItemStatus.Skipped : ItemStatus.Done);
-                        Report(0, 0, force: true);
+                        long bytes;
+                        bool skippedTopLevel = false;
+                        bool isDirItem = _fs.DirectoryExists(item.Path);
+
+                        if (isDirItem)
+                        {
+                            string destDir = Path.Combine(options.Destination, Path.GetFileName(item.Path));
+                            bytes = await CopyDirectoryAsync(item.Path, destDir, options, token,
+                                setName: n => { lock (reportLock) currentName = n; },
+                                report: Report,
+                                addCompleted: b => Interlocked.Add(ref _completedBytes, b)).ConfigureAwait(false);
+                            // CopyDirectoryAsync already incremented _completedBytes per file via
+                            // addCompleted, so we must NOT add `bytes` again below.
+
+                            if (options.DeleteSource)
+                            {
+                                try { _fs.DeleteDirectory(item.Path, recursive: true); }
+                                catch (Exception ex) { Log.Warning(ex, "Could not delete source dir {Path}", item.Path); }
+                            }
+                        }
+                        else if (_fs.FileExists(item.Path))
+                        {
+                            string destFile = Path.Combine(options.Destination, Path.GetFileName(item.Path));
+                            var fileResult = await CopyOneFileAsync(item.Path, destFile, options, token, Report).ConfigureAwait(false);
+                            bytes = fileResult.Bytes;
+                            skippedTopLevel = fileResult.Skipped;
+                            if (!skippedTopLevel) Interlocked.Add(ref _completedBytes, bytes);
+                        }
+                        else
+                        {
+                            throw new FileNotFoundException("Source no longer exists", item.Path);
+                        }
+
+                        totals.TotalBytes += bytes;
+
+                        if (skippedTopLevel)
+                        {
+                            totals.Skipped++;
+                            SetItemStatus(item, ItemStatus.Skipped);
+                            Log.Information("Skipped (existing): {Path}", item.Path);
+                        }
+                        else
+                        {
+                            totals.Done++;
+                            SetItemStatus(item, ItemStatus.Done);
+                        }
                     }
                     catch (OperationCanceledException)
                     {
+                        RewindToQueued(item);
                         item.SetStatus(ItemStatus.Queued);
                         throw;
                     }
                     catch (Exception ex)
                     {
-                        lock (reportLock) totals.Failed++;
-                        item.SetStatus(ItemStatus.Failed, ex.Message);
+                        totals.Failed++;
+                        SetItemStatus(item, ItemStatus.Failed, ex.Message);
                         Log.Error(ex, "Failed to copy {Path}", item.Path);
+                        // Keep going to next item — per-file resilience.
                     }
-                }).ConfigureAwait(false);
+                }
+            }
         }
-
-        // Phase B: sequential pass over directories + large files. This is the original
-        // pipelined path; inside a directory we may still parallelize *small* files
-        // belonging to that tree (CopyDirectoryAsync handles that internally).
-        foreach (var item in sequentialTopLevel)
+        finally
         {
-            token.ThrowIfCancellationRequested();
-            await _pause.WaitWhilePausedAsync(token).ConfigureAwait(false);
-
-            item.SetStatus(ItemStatus.InProgress);
-            currentName = Path.GetFileName(item.Path);
-
-            try
+            // Tally Removed at the end. Done/Failed/Skipped were counted at the
+            // point of transition; Removed transitions happen externally
+            // (TryRemovePending) and could fire any time, so we count once here.
+            lock (_lock)
             {
-                long bytes;
-                bool skippedTopLevel = false;
-
-                if (_fs.DirectoryExists(item.Path))
-                {
-                    string destDir = Path.Combine(options.Destination, Path.GetFileName(item.Path));
-                    bytes = await CopyDirectoryAsync(item.Path, destDir, options, token,
-                        setName: n => { lock (reportLock) currentName = n; },
-                        report: Report,
-                        addOverall: b => Interlocked.Add(ref overallBytes, b)).ConfigureAwait(false);
-                    // CopyDirectoryAsync already called addOverall for every file copied,
-                    // so DO NOT add `bytes` to overallBytes again below.
-
-                    if (options.DeleteSource)
-                    {
-                        try { _fs.DeleteDirectory(item.Path, recursive: true); }
-                        catch (Exception ex) { Log.Warning(ex, "Could not delete source dir {Path}", item.Path); }
-                    }
-                }
-                else if (_fs.FileExists(item.Path))
-                {
-                    string destFile = Path.Combine(options.Destination, Path.GetFileName(item.Path));
-                    var fileResult = await CopyOneFileAsync(item.Path, destFile, options, token, Report).ConfigureAwait(false);
-                    bytes = fileResult.Bytes;
-                    skippedTopLevel = fileResult.Skipped;
-                    Interlocked.Add(ref overallBytes, bytes);
-                }
-                else
-                {
-                    throw new FileNotFoundException("Source no longer exists", item.Path);
-                }
-
-                totals.TotalBytes += bytes;
-
-                if (skippedTopLevel)
-                {
-                    totals.Skipped++;
-                    item.SetStatus(ItemStatus.Skipped);
-                    Log.Information("Skipped (existing): {Path}", item.Path);
-                }
-                else
-                {
-                    totals.Done++;
-                    item.SetStatus(ItemStatus.Done);
-                }
+                int removedCount = 0;
+                foreach (var s in _state.Values)
+                    if (s == ItemStatus.Removed) removedCount++;
+                totals.Removed = removedCount;
             }
-            catch (OperationCanceledException)
-            {
-                item.SetStatus(ItemStatus.Queued);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                totals.Failed++;
-                item.SetStatus(ItemStatus.Failed, ex.Message);
-                Log.Error(ex, "Failed to copy {Path}", item.Path);
-                // Keep going to next item — per-file resilience.
-            }
+            overall.Stop();
+            totals.Elapsed = overall.Elapsed;
         }
-
-        overall.Stop();
-        totals.Elapsed = overall.Elapsed;
         return totals;
     }
 
@@ -339,7 +550,7 @@ public sealed class CopyEngine
         CancellationToken token,
         Action<string> setName,
         Action<long, long, bool> report,
-        Action<long> addOverall)
+        Action<long> addCompleted)
     {
         _fs.CreateDirectory(destDir);
         long bytes = 0;
@@ -379,10 +590,10 @@ public sealed class CopyEngine
                     {
                         var r = await CopyOneFileAsync(file, dest, options, ct,
                             // No per-buffer progress here either (would interleave names);
-                            // we account for the bytes at the end via addOverall.
+                            // we account for the bytes at the end via addCompleted.
                             (_, _, _) => { }).ConfigureAwait(false);
                         Interlocked.Add(ref bytes, r.Bytes);
-                        addOverall(r.Bytes);
+                        addCompleted(r.Bytes);
                         report(0, 0, true);
                     }
                     catch (OperationCanceledException) { throw; }
@@ -405,7 +616,7 @@ public sealed class CopyEngine
             {
                 var result = await CopyOneFileAsync(file, dest, options, token, report).ConfigureAwait(false);
                 Interlocked.Add(ref bytes, result.Bytes);
-                addOverall(result.Bytes);
+                addCompleted(result.Bytes);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -421,7 +632,7 @@ public sealed class CopyEngine
             long sub = await CopyDirectoryAsync(
                 folder,
                 Path.Combine(destDir, Path.GetFileName(folder)),
-                options, token, setName, report, addOverall).ConfigureAwait(false);
+                options, token, setName, report, addCompleted).ConfigureAwait(false);
             Interlocked.Add(ref bytes, sub);
         }
 

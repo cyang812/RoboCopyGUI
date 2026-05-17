@@ -29,6 +29,7 @@ public sealed partial class MainWindow : Window
     private readonly PowerService _power = new();
     private NetworkMonitor? _netMonitor;
     private CancellationTokenSource? _cts;
+    private CopyEngine? _engine;
     private bool _isPaused;
     /// <summary>Re-entrancy guard — true while we're loading saved settings into the UI,
     /// so the change handlers don't write back partially-loaded state and corrupt the file.</summary>
@@ -280,6 +281,7 @@ public sealed partial class MainWindow : Window
 
         var engine = new CopyEngine(_pause);
         engine.Progress += OnEngineProgress;
+        _engine = engine;
 
         bool failed = false;
         string finalStatus = "Ready";
@@ -326,6 +328,7 @@ public sealed partial class MainWindow : Window
         finally
         {
             engine.Progress -= OnEngineProgress;
+            _engine = null;
             _power.Release();
             StopNetworkMonitor();
             SetUiState(isOperating: false);
@@ -588,7 +591,11 @@ public sealed partial class MainWindow : Window
         {
             if (string.IsNullOrWhiteSpace(f)) continue;
             if (_sourceItems.Any(i => string.Equals(i.Path, f, StringComparison.OrdinalIgnoreCase))) continue;
-            _sourceItems.Add(new SourceItem(f));
+            var item = new SourceItem(f);
+            _sourceItems.Add(item);
+            // If a copy is in flight, also enroll the item in the engine's live queue
+            // so it gets picked up on the next outer-loop iteration.
+            _engine?.AddItem(item);
             added = true;
         }
         if (added)
@@ -621,7 +628,9 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _sourceItems.Add(new SourceItem(folder));
+        var item = new SourceItem(folder);
+        _sourceItems.Add(item);
+        _engine?.AddItem(item);
         try
         {
             // Remember the folder itself so the next Add Folder dialog lands inside it.
@@ -664,7 +673,9 @@ public sealed partial class MainWindow : Window
                         continue;
                     }
 
-                    _sourceItems.Add(new SourceItem(item.Path));
+                    var src = new SourceItem(item.Path);
+                    _sourceItems.Add(src);
+                    _engine?.AddItem(src);
                     added = true;
                 }
                 if (added) UpdateSourceSummary();
@@ -674,6 +685,19 @@ public sealed partial class MainWindow : Window
         {
             deferral.Complete();
         }
+    }
+
+    private void RemoveItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.DataContext is not SourceItem item) return;
+
+        // If a copy is in flight, tell the engine first so it stops considering the
+        // item. The engine's TryRemovePending only succeeds while the item is still
+        // Queued — if the engine just claimed it, the request is a no-op and the
+        // item finishes naturally. Either way, drop it from the UI list.
+        _engine?.TryRemovePending(item);
+        _sourceItems.Remove(item);
+        UpdateSourceSummary();
     }
 
     private void ClearSources_Click(object sender, RoutedEventArgs e)
@@ -712,6 +736,7 @@ public sealed partial class MainWindow : Window
         parts.Append($"{FormatSize(t.TotalBytes)} in {FormatTime(t.Elapsed)}, avg {mbPerSec:F1} MB/s");
         parts.Append($"  ·  {t.Done} done");
         if (t.Skipped > 0) parts.Append($", {t.Skipped} skipped");
+        if (t.Removed > 0) parts.Append($", {t.Removed} removed");
         if (t.Failed > 0)  parts.Append($", {t.Failed} failed");
         return parts.ToString();
     }
@@ -740,9 +765,11 @@ public sealed partial class MainWindow : Window
         ClearListBtn.IsEnabled = !isOperating;
         BrowseDestBtn.IsEnabled = !isOperating;
         ConflictPolicyCombo.IsEnabled = !isOperating;
-        AddFilesBtn.IsEnabled = !isOperating;
-        AddFolderBtn.IsEnabled = !isOperating;
-        DropArea.AllowDrop = !isOperating;
+        // Dynamic queue: Add Files / Add Folder / drop stay live during a copy
+        // so the user can append more work without waiting for the run to finish.
+        AddFilesBtn.IsEnabled = true;
+        AddFolderBtn.IsEnabled = true;
+        DropArea.AllowDrop = true;
         CopyProgressBar.Visibility = isOperating ? Visibility.Visible : Visibility.Collapsed;
         OverallProgressBar.Visibility = isOperating ? Visibility.Visible : Visibility.Collapsed;
         OverallProgressText.Visibility = isOperating ? Visibility.Visible : Visibility.Collapsed;
@@ -781,6 +808,8 @@ public sealed class SourceItem : INotifyPropertyChanged, ICopyItem
             OnPropertyChanged(nameof(StatusToolTip));
             OnPropertyChanged(nameof(IsCompleted));
             OnPropertyChanged(nameof(CompletionVisibility));
+            OnPropertyChanged(nameof(CanRemove));
+            OnPropertyChanged(nameof(RemoveVisibility));
         }
     }
 
@@ -806,6 +835,7 @@ public sealed class SourceItem : INotifyPropertyChanged, ICopyItem
     {
         ItemStatus.Done     => 0.55,
         ItemStatus.Skipped  => 0.55,
+        ItemStatus.Removed  => 0.55,
         _                   => 1.0,
     };
 
@@ -817,6 +847,7 @@ public sealed class SourceItem : INotifyPropertyChanged, ICopyItem
         ItemStatus.Done       => "\uE73E", // CheckMark
         ItemStatus.Failed     => "\uEB90", // ErrorBadge
         ItemStatus.Skipped    => "\uE7E8", // SkipForward / Forward
+        ItemStatus.Removed    => "\uE894", // Cancel
         _ => "\uE823",
     };
 
@@ -825,6 +856,7 @@ public sealed class SourceItem : INotifyPropertyChanged, ICopyItem
         ItemStatus.Done    => new SolidColorBrush(Color.FromArgb(0xFF, 0x10, 0x7C, 0x10)),
         ItemStatus.Failed  => new SolidColorBrush(Color.FromArgb(0xFF, 0xC4, 0x2B, 0x1C)),
         ItemStatus.Skipped => new SolidColorBrush(Color.FromArgb(0xFF, 0x80, 0x80, 0x80)),
+        ItemStatus.Removed => new SolidColorBrush(Color.FromArgb(0xFF, 0x80, 0x80, 0x80)),
         _ => new SolidColorBrush(Color.FromArgb(0xFF, 0x60, 0x60, 0x60)),
     };
 
@@ -833,6 +865,17 @@ public sealed class SourceItem : INotifyPropertyChanged, ICopyItem
         ItemStatus.Failed when !string.IsNullOrEmpty(_error) => $"Failed: {_error}",
         _ => _status.ToString(),
     };
+
+    /// <summary>
+    /// True only while the item is still waiting in the queue — that's the only
+    /// time the per-row Remove button is meaningful. Once the engine has claimed
+    /// the item (InProgress) or it has terminated, removal is no longer offered.
+    /// </summary>
+    public bool CanRemove => _status == ItemStatus.Queued;
+
+    /// <summary>Bound directly by the per-row Remove button's <c>Visibility</c>.</summary>
+    public Visibility RemoveVisibility =>
+        _status == ItemStatus.Queued ? Visibility.Visible : Visibility.Collapsed;
 
     /// <summary>Kept for back-compat with any older XAML bindings; not used after Phase 2.</summary>
     public Visibility CompletionVisibility => IsCompleted ? Visibility.Visible : Visibility.Collapsed;
