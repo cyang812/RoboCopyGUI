@@ -59,25 +59,44 @@ public sealed record CopyProgress(
 /// UI-independent file-copy engine. Pipelines async I/O with 1 MiB buffers, supports
 /// per-file resilience, conflict resolution, pause/resume and cancellation.
 /// </summary>
+/// <remarks>
+/// All file-system access is routed through an injected <see cref="IFileSystem"/>
+/// (defaults to <see cref="RealFileSystem.Instance"/>), so the engine is unit-testable
+/// against an in-memory fake without touching real disk.
+/// </remarks>
 public sealed class CopyEngine
 {
     public const int CopyBufferSize = 1 * 1024 * 1024;
     private const int ProgressUpdateIntervalMs = 150;
 
     private readonly PauseTokenSource _pause;
+    private readonly IFileSystem _fs;
 
-    public CopyEngine(PauseTokenSource pause) => _pause = pause;
+    public CopyEngine(PauseTokenSource pause, IFileSystem? fs = null)
+    {
+        _pause = pause;
+        _fs = fs ?? RealFileSystem.Instance;
+    }
 
     /// <summary>Fired (throttled) while a file is being copied.</summary>
     public event Action<CopyProgress>? Progress;
 
     /// <summary>
-    /// Walk the queued items and total their sizes. Cheap for files; for directories
-    /// it recursively sums file lengths. Safe to call before <see cref="RunAsync"/>.
-    /// Errors enumerating a particular item are swallowed (counted as 0) so the
-    /// preflight never blocks a copy from starting.
+    /// Walk the queued items and total their sizes against the real file system.
+    /// Convenience overload preserved for backward compatibility with callers
+    /// that don't supply an <see cref="IFileSystem"/>.
     /// </summary>
-    public static long Preflight(IEnumerable<ICopyItem> items, CancellationToken token = default)
+    public static long Preflight(IEnumerable<ICopyItem> items, CancellationToken token = default) =>
+        Preflight(items, RealFileSystem.Instance, token);
+
+    /// <summary>
+    /// Walk the queued items and total their sizes against the supplied
+    /// <paramref name="fs"/>. Cheap for files; for directories it recursively sums
+    /// file lengths. Safe to call before <see cref="RunAsync"/>. Errors enumerating
+    /// a particular item are swallowed (counted as 0) so the preflight never blocks
+    /// a copy from starting.
+    /// </summary>
+    public static long Preflight(IEnumerable<ICopyItem> items, IFileSystem fs, CancellationToken token = default)
     {
         long total = 0;
         foreach (var item in items)
@@ -85,18 +104,18 @@ public sealed class CopyEngine
             token.ThrowIfCancellationRequested();
             try
             {
-                if (Directory.Exists(item.Path))
+                if (fs.DirectoryExists(item.Path))
                 {
-                    foreach (var f in Directory.EnumerateFiles(item.Path, "*", SearchOption.AllDirectories))
+                    foreach (var f in fs.EnumerateFiles(item.Path, recurse: true))
                     {
                         token.ThrowIfCancellationRequested();
-                        try { total += new FileInfo(f).Length; }
+                        try { total += fs.GetFileSize(f); }
                         catch { /* unreadable file — skip */ }
                     }
                 }
-                else if (File.Exists(item.Path))
+                else if (fs.FileExists(item.Path))
                 {
-                    total += new FileInfo(item.Path).Length;
+                    total += fs.GetFileSize(item.Path);
                 }
             }
             catch (OperationCanceledException) { throw; }
@@ -116,7 +135,7 @@ public sealed class CopyEngine
         var totals = new CopyTotals();
         if (items.Count == 0) return totals;
 
-        long totalQueueBytes = Preflight(items, token);
+        long totalQueueBytes = Preflight(items, _fs, token);
         var overall = Stopwatch.StartNew();
 
         // Throttled, rolling speed counter shared across all files in this run.
@@ -172,10 +191,10 @@ public sealed class CopyEngine
         {
             foreach (var item in items)
             {
-                if (File.Exists(item.Path))
+                if (_fs.FileExists(item.Path))
                 {
                     long len;
-                    try { len = new FileInfo(item.Path).Length; }
+                    try { len = _fs.GetFileSize(item.Path); }
                     catch { len = long.MaxValue; }
                     if (len <= options.SmallFileThresholdBytes)
                     {
@@ -249,7 +268,7 @@ public sealed class CopyEngine
                 long bytes;
                 bool skippedTopLevel = false;
 
-                if (Directory.Exists(item.Path))
+                if (_fs.DirectoryExists(item.Path))
                 {
                     string destDir = Path.Combine(options.Destination, Path.GetFileName(item.Path));
                     bytes = await CopyDirectoryAsync(item.Path, destDir, options, token,
@@ -261,11 +280,11 @@ public sealed class CopyEngine
 
                     if (options.DeleteSource)
                     {
-                        try { Directory.Delete(item.Path, recursive: true); }
+                        try { _fs.DeleteDirectory(item.Path, recursive: true); }
                         catch (Exception ex) { Log.Warning(ex, "Could not delete source dir {Path}", item.Path); }
                     }
                 }
-                else if (File.Exists(item.Path))
+                else if (_fs.FileExists(item.Path))
                 {
                     string destFile = Path.Combine(options.Destination, Path.GetFileName(item.Path));
                     var fileResult = await CopyOneFileAsync(item.Path, destFile, options, token, Report).ConfigureAwait(false);
@@ -322,7 +341,7 @@ public sealed class CopyEngine
         Action<long, long, bool> report,
         Action<long> addOverall)
     {
-        Directory.CreateDirectory(destDir);
+        _fs.CreateDirectory(destDir);
         long bytes = 0;
 
         // Split this folder's files: small ones go through the parallel path,
@@ -330,11 +349,11 @@ public sealed class CopyEngine
         bool parallelEnabled = options.MaxParallelSmallFiles > 1;
         var smallFiles = new List<string>();
         var largeFiles = new List<string>();
-        foreach (string file in Directory.EnumerateFiles(sourceDir))
+        foreach (string file in _fs.EnumerateFiles(sourceDir, recurse: false))
         {
             token.ThrowIfCancellationRequested();
             long len;
-            try { len = new FileInfo(file).Length; }
+            try { len = _fs.GetFileSize(file); }
             catch { len = long.MaxValue; }
             if (parallelEnabled && len <= options.SmallFileThresholdBytes)
                 smallFiles.Add(file);
@@ -396,7 +415,7 @@ public sealed class CopyEngine
             }
         }
 
-        foreach (string folder in Directory.EnumerateDirectories(sourceDir))
+        foreach (string folder in _fs.EnumerateDirectories(sourceDir))
         {
             token.ThrowIfCancellationRequested();
             long sub = await CopyDirectoryAsync(
@@ -419,7 +438,7 @@ public sealed class CopyEngine
         Action<long, long, bool> report)
     {
         // Conflict resolution — may mutate destFile or short-circuit.
-        if (File.Exists(destFile))
+        if (_fs.FileExists(destFile))
         {
             switch (options.Conflict)
             {
@@ -427,36 +446,28 @@ public sealed class CopyEngine
                     return new OneFileResult(0, Skipped: true);
 
                 case ConflictPolicy.SkipIfSame:
-                    if (FilesLookEquivalent(sourceFile, destFile))
+                    if (FilesLookEquivalent(_fs, sourceFile, destFile))
                         return new OneFileResult(0, Skipped: true);
                     break;
 
                 case ConflictPolicy.Rename:
-                    destFile = FindNonClashingName(destFile);
+                    destFile = FindNonClashingName(_fs, destFile);
                     break;
 
                 case ConflictPolicy.Overwrite:
                 default:
-                    break; // FileMode.Create below will overwrite.
+                    break; // OpenWrite below will create/truncate.
             }
         }
 
-        long totalBytes = new FileInfo(sourceFile).Length;
+        long totalBytes = _fs.GetFileSize(sourceFile);
 
-        // Tuning notes:
-        //   - 1 MiB buffer amortizes SMB packet overhead.
-        //   - FileOptions.Asynchronous: enables overlapped I/O at the Win32 layer.
-        //   - FileOptions.SequentialScan: hint to the OS read-cache, helps spinning HDDs.
-        //   - We deliberately do NOT use FileOptions.WriteThrough — it disables the SMB
-        //     server's write cache and tanks throughput on home NAS.
-        const FileOptions readOpts = FileOptions.Asynchronous | FileOptions.SequentialScan;
-        const FileOptions writeOpts = FileOptions.Asynchronous;
-
-        await using (var src = new FileStream(sourceFile, FileMode.Open, FileAccess.Read,
-                         FileShare.Read, CopyBufferSize, readOpts))
-        await using (var dst = new FileStream(destFile, FileMode.Create, FileAccess.Write,
-                         FileShare.None, CopyBufferSize, writeOpts))
+        await using (var src = _fs.OpenRead(sourceFile))
+        await using (var dst = _fs.OpenWrite(destFile))
         {
+            // Best-effort preallocation: lets the OS/SMB server reserve space and
+            // avoids file-system fragmentation on large files. Some shares disallow
+            // SetLength on a fresh stream; ignore the failure and stream normally.
             try { dst.SetLength(totalBytes); } catch { /* some shares disallow */ }
 
             byte[] bufA = new byte[CopyBufferSize];
@@ -486,12 +497,12 @@ public sealed class CopyEngine
         }
 
         // Preserve last-write time so SkipIfSame can recognize already-copied files later.
-        try { File.SetLastWriteTimeUtc(destFile, File.GetLastWriteTimeUtc(sourceFile)); }
+        try { _fs.SetLastWriteTimeUtc(destFile, _fs.GetLastWriteTimeUtc(sourceFile)); }
         catch (Exception ex) { Log.Debug(ex, "Could not preserve mtime on {Dest}", destFile); }
 
         if (options.DeleteSource)
         {
-            File.Delete(sourceFile);
+            _fs.DeleteFile(sourceFile);
         }
 
         return new OneFileResult(totalBytes, Skipped: false);
@@ -499,14 +510,14 @@ public sealed class CopyEngine
 
     // ----------------------------- helpers -----------------------------
 
-    private static bool FilesLookEquivalent(string source, string dest)
+    private static bool FilesLookEquivalent(IFileSystem fs, string source, string dest)
     {
         try
         {
-            var s = new FileInfo(source);
-            var d = new FileInfo(dest);
-            if (s.Length != d.Length) return false;
-            var diff = (s.LastWriteTimeUtc - d.LastWriteTimeUtc).Duration();
+            long srcLen = fs.GetFileSize(source);
+            long dstLen = fs.GetFileSize(dest);
+            if (srcLen != dstLen) return false;
+            var diff = (fs.GetLastWriteTimeUtc(source) - fs.GetLastWriteTimeUtc(dest)).Duration();
             return diff <= TimeSpan.FromSeconds(2);
         }
         catch
@@ -515,7 +526,7 @@ public sealed class CopyEngine
         }
     }
 
-    private static string FindNonClashingName(string path)
+    private static string FindNonClashingName(IFileSystem fs, string path)
     {
         string dir = Path.GetDirectoryName(path) ?? string.Empty;
         string stem = Path.GetFileNameWithoutExtension(path);
@@ -524,7 +535,7 @@ public sealed class CopyEngine
         for (int i = 1; i < 10_000; i++)
         {
             string candidate = Path.Combine(dir, $"{stem} ({i}){ext}");
-            if (!File.Exists(candidate)) return candidate;
+            if (!fs.FileExists(candidate)) return candidate;
         }
         // Pathological — fall back to a timestamp.
         return Path.Combine(dir, $"{stem}_{DateTime.UtcNow:yyyyMMddHHmmssfff}{ext}");

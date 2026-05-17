@@ -46,11 +46,15 @@ See `ideas.md` for the full backlog. Items selected for the next release:
       `TaskScheduler.UnobservedTaskException`, write a minidump via
       `MiniDumpWriteDump` P/Invoke to `crashes/<timestamp>.dmp` (capped
       at 5, LRU cleanup).
-- [ ] **`IFileSystem` abstraction in `CopyEngine`** (idea #19) — extract
+- [x] **`IFileSystem` abstraction in `CopyEngine`** (idea #19) — extract
       the file-system surface (Open / Create / Move / Delete / Exists /
       Enumerate / GetLastWriteTimeUtc / GetSize) behind an interface so
       the engine becomes mockable in tests. Required runway for several
       future features (verify-after-copy, resume, filters).
+      _Done: `Services/IFileSystem.cs` + `RealFileSystem`; `CopyEngine`
+      now takes an optional `IFileSystem` (defaults to `RealFileSystem.Instance`,
+      so the WinUI call site is unchanged); test project ships an
+      `InMemoryFileSystem` fake with 17 substitution + contract tests._
 
 ## Deferred / opt-in
 - [ ] Full MVVM refactor (`MainViewModel`, `RelayCommand`). Invasive, no user-visible benefit.

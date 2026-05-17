@@ -15,6 +15,7 @@
       the tests onto Windows and bloat the test build.
     -->
     <Compile Include="..\Services\CopyEngine.cs" Link="Services\CopyEngine.cs" />
+    <Compile Include="..\Services\IFileSystem.cs" Link="Services\IFileSystem.cs" />
     <Compile Include="..\Services\PauseTokenSource.cs" Link="Services\PauseTokenSource.cs" />
     <Compile Include="..\Services\Enums.cs" Link="Services\Enums.cs" />
   </ItemGroup>
