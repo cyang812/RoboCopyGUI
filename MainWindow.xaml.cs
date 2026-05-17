@@ -88,6 +88,10 @@ public sealed partial class MainWindow : Window
             _power.Release();
             StopNetworkMonitor();
         };
+
+        // Fire the update check after the window is fully constructed so an InfoBar
+        // can appear without racing with InitializeComponent / theme application.
+        StartSelfUpdateCheck();
     }
 
     /// <summary>Logical-pixel floor below which the layout starts to break / clip.
@@ -190,6 +194,7 @@ public sealed partial class MainWindow : Window
             NotifyOnDoneCheck.IsChecked = s.NotifyOnCompletion;
             PlaySoundCheck.IsChecked = s.PlaySoundOnCompletion;
             ShowNetCheck.IsChecked = s.ShowNetworkThroughput;
+            CheckUpdatesCheck.IsChecked = s.CheckForUpdatesOnStartup;
             ParallelSmallBox.Value = Math.Clamp(s.MaxParallelSmallFiles, 1, 16);
 
             // Restore conflict policy selection (defaults to Overwrite if unknown).
@@ -414,6 +419,61 @@ public sealed partial class MainWindow : Window
         {
             NetText.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void CheckUpdates_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressSettingsSave) return;
+        App.Settings.CheckForUpdatesOnStartup = CheckUpdatesCheck.IsChecked == true;
+        SettingsService.Save(App.Settings);
+        Log.Debug("Check-for-updates set to {Enabled}", App.Settings.CheckForUpdatesOnStartup);
+    }
+
+    private async void UpdateOpenLink_Click(object sender, RoutedEventArgs e)
+    {
+        string url = (UpdateInfoBar.Tag as string) ?? SelfUpdateService.ReleasesPageUrl;
+        try
+        {
+            await Windows.System.Launcher.LaunchUriAsync(new Uri(url));
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Could not open update URL {Url}", url);
+        }
+    }
+
+    /// <summary>
+    /// Fire-and-forget self-update check. Runs on a background thread, never
+    /// throws back to the UI, and only shows the InfoBar when a newer release
+    /// actually exists. Caller controls opt-out via
+    /// <see cref="AppSettings.CheckForUpdatesOnStartup"/>.
+    /// </summary>
+    private void StartSelfUpdateCheck()
+    {
+        if (!App.Settings.CheckForUpdatesOnStartup) return;
+
+        _ = Task.Run(async () =>
+        {
+            string current = GetCurrentAssemblyVersion();
+            var result = await SelfUpdateService.CheckAsync(current).ConfigureAwait(false);
+            if (!result.HasUpdate || result.LatestVersion is null) return;
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                UpdateInfoBar.Message = $"RoboCopyGUI {result.LatestVersion} is available (you have {current}).";
+                UpdateInfoBar.Tag = result.ReleaseUrl ?? SelfUpdateService.ReleasesPageUrl;
+                UpdateInfoBar.IsOpen = true;
+                Log.Information("Update available: {Latest} (current {Current})", result.LatestVersion, current);
+            });
+        });
+    }
+
+    private static string GetCurrentAssemblyVersion()
+    {
+        var asm = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+        string? infoVersion = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(infoVersion)) return infoVersion;
+        return asm.GetName().Version?.ToString() ?? "0.0.0";
     }
 
     private void ParallelSmallBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)

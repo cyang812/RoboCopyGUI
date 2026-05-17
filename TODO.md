@@ -49,9 +49,23 @@ See `ideas.md` for the full backlog. Items selected for the next release:
   per-row Remove (✕) button bound to `SourceItem.RemoveVisibility`.
   12 new tests cover add/remove flows, idempotency, snapshot ordering,
   live-denominator math, and the single-run guard._
-- [ ] **Self-update checker** (idea #15) — query GitHub Releases API on
+- [x] **Self-update checker** (idea #15) — query GitHub Releases API on
       launch; show an unobtrusive `InfoBar` if a newer version exists.
       Settings toggle to opt out.
+      _Done: `Services/SelfUpdateService.cs` performs a single best-effort
+      `GET /repos/cyang812/RoboCopyGUI/releases/latest` per launch with
+      a `User-Agent: RoboCopyGUI-SelfUpdateCheck` header and 8s timeout.
+      Pure-functional `TryParseSemver` / `IsNewer` helpers tolerate `v`
+      prefix and strip `-prerelease`/`+buildmeta` suffixes. All network
+      failures degrade silently (returned as `UpdateCheckResult.Failed`,
+      logged at Debug). On a real new release, MainWindow surfaces an
+      `InfoBar` at the top of the body with a "View on GitHub"
+      HyperlinkButton that calls `Launcher.LaunchUriAsync`. New
+      `AppSettings.CheckForUpdatesOnStartup` (default true) is the
+      opt-out, exposed as a checkbox in the settings row. 29 new tests
+      cover semver parsing, semver comparison, JSON tag extraction,
+      and end-to-end `CheckAsync` via an injected fake
+      `HttpMessageHandler` (no real network calls)._
 - [x] **Crash dump on unhandled exception** (idea #16) — hook
       `AppDomain.UnhandledException` and
       `TaskScheduler.UnobservedTaskException`, write a minidump via
