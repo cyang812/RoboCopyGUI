@@ -30,6 +30,7 @@ public sealed partial class MainWindow : Window
     private NetworkMonitor? _netMonitor;
     private CancellationTokenSource? _cts;
     private CopyEngine? _engine;
+    private TaskbarProgressService? _taskbarProgress;
     private bool _isPaused;
     /// <summary>Re-entrancy guard — true while we're loading saved settings into the UI,
     /// so the change handlers don't write back partially-loaded state and corrupt the file.</summary>
@@ -81,6 +82,7 @@ public sealed partial class MainWindow : Window
         UpdateThemeButtonLabel();
         ApplyTitleBarTheme();
         EnforceMinimumWindowSize();
+        InitializeTaskbarProgress();
         // Re-enforce the minimum on every user resize. The handler is idempotent
         // (only resizes back when smaller than the floor) so it can't loop.
         SizeChanged += (_, _) => EnforceMinimumWindowSize();
@@ -88,6 +90,7 @@ public sealed partial class MainWindow : Window
         {
             _power.Release();
             StopNetworkMonitor();
+            _taskbarProgress?.Dispose();
         };
 
         // Fire the update check after the window is fully constructed so an InfoBar
@@ -248,23 +251,26 @@ public sealed partial class MainWindow : Window
         SettingsService.Save(App.Settings);
     }
 
-    private static string GetWindowTitle()
+    /// <summary>
+    /// Build the <see cref="TaskbarProgressService"/> once the window has a
+    /// real HWND. Best-effort: failures are swallowed inside the service so
+    /// callers can fire-and-forget without null-guards. Subsequent calls in
+    /// the ctor / event handlers route through <c>_taskbarProgress?.X(...)</c>.
+    /// </summary>
+    private void InitializeTaskbarProgress()
     {
-        const string baseTitle = "WinUI 3 File Copier";
-        string? buildTime = GetBuildTimeStamp();
-        return buildTime is null ? baseTitle : $"{baseTitle} - built {buildTime}";
+        try
+        {
+            IntPtr hwnd = WindowNative.GetWindowHandle(this);
+            if (hwnd != IntPtr.Zero) _taskbarProgress = new TaskbarProgressService(hwnd);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not initialize taskbar progress service.");
+        }
     }
 
-    private static string? GetBuildTimeStamp()
-    {
-        var assembly = Assembly.GetExecutingAssembly();
-        if (string.IsNullOrEmpty(assembly.Location))
-        {
-            return null;
-        }
-        DateTime buildTime = File.GetLastWriteTime(assembly.Location);
-        return buildTime.ToString("yyyy-MM-dd HH:mm:ss");
-    }
+    private static string GetWindowTitle() => VersionInfo.GetWindowTitle();
 
     // --- BUTTON HANDLERS ---
 
@@ -296,6 +302,8 @@ public sealed partial class MainWindow : Window
         _pause.Resume();
         _isPaused = false;
         PauseBtn.Content = "Pause";
+        _taskbarProgress?.SetState(TaskbarState.Normal);
+        _taskbarProgress?.SetProgress(0);
 
         if (App.Settings.KeepAwakeDuringCopy)
         {
@@ -359,6 +367,18 @@ public sealed partial class MainWindow : Window
             _engine = null;
             _power.Release();
             StopNetworkMonitor();
+            // Taskbar: clear on success/cancel; flash red & stay until next
+            // run if anything actually failed. The in-app status text already
+            // carries the detail; the taskbar state is just a glance signal.
+            if (failed)
+            {
+                _taskbarProgress?.SetState(TaskbarState.Error);
+                _taskbarProgress?.SetProgress(1.0);
+            }
+            else
+            {
+                _taskbarProgress?.Clear();
+            }
             SetUiState(isOperating: false);
             NotificationService.NotifyCompletion(
                 title: failed ? "RoboCopyGUI - finished with issues" : "RoboCopyGUI - copy finished",
@@ -385,6 +405,14 @@ public sealed partial class MainWindow : Window
             string etaText = p.Eta.TotalSeconds >= 1 ? $"  \u00B7  ETA {FormatTime(p.Eta)}" : string.Empty;
             StatusText.Text = $"Copying: {p.CurrentName}  \u2014  {p.InstantMBps:F1} MB/s{etaText}";
             OverallProgressText.Text = $"{FormatSize(p.OverallBytesCopied)} / {FormatSize(p.OverallBytesTotal)}  ({overallPct:F0}%)";
+
+            // Mirror the overall progress on the taskbar icon. We don't flip
+            // back to Normal here every tick — only on Start and Resume —
+            // so a Paused state set by the user sticks until they resume.
+            if (p.OverallBytesTotal > 0)
+            {
+                _taskbarProgress?.SetProgress((double)p.OverallBytesCopied / p.OverallBytesTotal);
+            }
         });
     }
 
@@ -403,12 +431,14 @@ public sealed partial class MainWindow : Window
             _pause.Pause();
             PauseBtn.Content = "Resume";
             _isPaused = true;
+            _taskbarProgress?.SetState(TaskbarState.Paused);
         }
         else
         {
             _pause.Resume();
             PauseBtn.Content = "Pause";
             _isPaused = false;
+            _taskbarProgress?.SetState(TaskbarState.Normal);
         }
     }
 
@@ -477,7 +507,7 @@ public sealed partial class MainWindow : Window
 
         _ = Task.Run(async () =>
         {
-            string current = GetCurrentAssemblyVersion();
+            string current = VersionInfo.GetAssemblyVersion() ?? "0.0.0";
             var result = await SelfUpdateService.CheckAsync(current).ConfigureAwait(false);
             if (!result.HasUpdate || result.LatestVersion is null) return;
 
@@ -489,14 +519,6 @@ public sealed partial class MainWindow : Window
                 Log.Information("Update available: {Latest} (current {Current})", result.LatestVersion, current);
             });
         });
-    }
-
-    private static string GetCurrentAssemblyVersion()
-    {
-        var asm = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
-        string? infoVersion = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-        if (!string.IsNullOrWhiteSpace(infoVersion)) return infoVersion;
-        return asm.GetName().Version?.ToString() ?? "0.0.0";
     }
 
     private void ParallelSmallBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
