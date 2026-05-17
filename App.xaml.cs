@@ -43,6 +43,11 @@ namespace RoboCopyGUI
         /// </summary>
         public App()
         {
+            // Install crash dump hooks FIRST so any exception during the rest of
+            // init (settings load, logger init, XAML init) still produces a dump.
+            // Install() is idempotent and safe to call before logging exists.
+            CrashDumpService.Install();
+
             // Bring up logging + settings before XAML so any constructor-time issues are captured.
             try
             {
@@ -60,6 +65,15 @@ namespace RoboCopyGUI
                 try { Log.Error(ex, "Startup init failed (logging/settings/notifications)."); }
                 catch { /* logger may itself be the culprit */ }
             }
+
+            // WinUI 3 routes XAML-thread exceptions through this event; the
+            // AppDomain handler doesn't always see them. Forward to the same
+            // crash-dump service so we get coverage for UI-thread crashes too.
+            UnhandledException += (_, e) =>
+            {
+                if (e.Exception is not null)
+                    CrashDumpService.WriteDump(e.Exception, trigger: "Application.UnhandledException");
+            };
 
             InitializeComponent();
         }

@@ -13,16 +13,29 @@ namespace RoboCopyGUI.Tests;
 /// Minimal in-memory <see cref="ICopyItem"/> implementation for tests.
 /// Records the sequence of status transitions so assertions can target them.
 /// </summary>
+/// <remarks>
+/// <see cref="OnStatus"/> fires synchronously from inside the engine's worker
+/// thread immediately after each <see cref="SetStatus"/> call. Tests can use it
+/// to trigger deterministic mid-run actions (e.g. <c>engine.AddItem(...)</c> or
+/// <c>engine.TryRemovePending(...)</c>) at a known point in the engine's flow,
+/// avoiding sleep-based races.
+/// </remarks>
 internal sealed class FakeCopyItem : ICopyItem
 {
     public string Path { get; }
     public List<(ItemStatus Status, string? Error)> Transitions { get; } = new();
     public ItemStatus LastStatus => Transitions.Count == 0 ? ItemStatus.Queued : Transitions[^1].Status;
 
+    /// <summary>Optional hook invoked synchronously after each status notification.</summary>
+    public Action<ItemStatus>? OnStatus { get; set; }
+
     public FakeCopyItem(string path) => Path = path;
 
-    public void SetStatus(ItemStatus status, string? error = null) =>
+    public void SetStatus(ItemStatus status, string? error = null)
+    {
         Transitions.Add((status, error));
+        OnStatus?.Invoke(status);
+    }
 }
 
 /// <summary>

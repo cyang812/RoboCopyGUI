@@ -30,6 +30,14 @@
       localized UI is needed later.
     -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!--
+      Icon embedded into the unpackaged .exe so Explorer, taskbar and Alt-Tab
+      all show the custom RoboCopyGUI icon instead of the generic .NET app
+      glyph. The packaged MSIX path uses the Assets/Square*.png logos via
+      Package.appxmanifest separately.
+    -->
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -40,6 +48,9 @@
     <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
     <Content Include="Assets\StoreLogo.png" />
     <Content Include="Assets\Wide310x150Logo.scale-200.png" />
+    <Content Include="Assets\AppIcon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

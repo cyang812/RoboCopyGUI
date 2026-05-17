@@ -62,4 +62,11 @@ public sealed class AppSettings
 
     /// <summary>Last folder the Add Files / Add Folder picker opened from.</summary>
     public string LastSourceFolder { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Check the GitHub Releases API once per launch and show an inline "update
+    /// available" InfoBar when a newer release exists. Disable to opt out of
+    /// the (one) outbound HTTP call per launch.
+    /// </summary>
+    public bool CheckForUpdatesOnStartup { get; set; } = true;
 }

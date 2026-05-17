@@ -17,8 +17,82 @@
       load/save; defensive logging in `App.xaml.cs` startup catch and a
       build-then-swap `LoggingService.SetLevel`.
 
+## Next version (planned) — Phase 6
+
+See `ideas.md` for the full backlog. Items selected for the next release:
+
+- [x] **Dynamic copy queue** — let the queue mutate at any time, including
+      during an active copy.
+  - Add a per-item "Remove" affordance (small ✕ button or right-click
+    "Remove from queue") that's enabled only while the item's status is
+    `Queued`.
+  - Allow drag-drop and the Add files / Add folder buttons to keep working
+    while a copy is running. New items append to the live queue and are
+    picked up by the engine on the next iteration.
+  - New `ItemStatus.Removed` for items the user removed before they
+    started, so the engine skips them cleanly.
+  - `CopyEngine.RunAsync` switches from a `foreach` snapshot to an indexed
+    loop that re-reads `items.Count` and `items[i].Status` each iteration
+    (with thread-safe access via `DispatcherQueue.TryEnqueue` or a lock).
+    Preflight total bytes becomes a moving target; the engine should emit
+    running-total updates instead of treating the total as fixed.
+  - Tests: add `FakeCopyItem` scenarios for "add during run" and
+    "remove pending mid-run".
+  _Done: `CopyEngine` owns a live queue with explicit `AddItem` /
+  `TryRemovePending` / `Snapshot` / `GetStatus` APIs. The engine tracks
+  per-item state under its own lock (decoupled from the UI's async
+  dispatch), uses an outer batched loop that picks up newly-added items
+  on each iteration, computes a live denominator that grows/shrinks as
+  items are added/removed, and reports `CopyTotals.Removed` separately.
+  Each engine instance is one-shot (`InvalidOperationException` on
+  re-use). MainWindow keeps Add/Drop enabled during copy and adds a
+  per-row Remove (✕) button bound to `SourceItem.RemoveVisibility`.
+  12 new tests cover add/remove flows, idempotency, snapshot ordering,
+  live-denominator math, and the single-run guard._
+- [x] **Self-update checker** (idea #15) — query GitHub Releases API on
+      launch; show an unobtrusive `InfoBar` if a newer version exists.
+      Settings toggle to opt out.
+      _Done: `Services/SelfUpdateService.cs` performs a single best-effort
+      `GET /repos/cyang812/RoboCopyGUI/releases/latest` per launch with
+      a `User-Agent: RoboCopyGUI-SelfUpdateCheck` header and 8s timeout.
+      Pure-functional `TryParseSemver` / `IsNewer` helpers tolerate `v`
+      prefix and strip `-prerelease`/`+buildmeta` suffixes. All network
+      failures degrade silently (returned as `UpdateCheckResult.Failed`,
+      logged at Debug). On a real new release, MainWindow surfaces an
+      `InfoBar` at the top of the body with a "View on GitHub"
+      HyperlinkButton that calls `Launcher.LaunchUriAsync`. New
+      `AppSettings.CheckForUpdatesOnStartup` (default true) is the
+      opt-out, exposed as a checkbox in the settings row. 29 new tests
+      cover semver parsing, semver comparison, JSON tag extraction,
+      and end-to-end `CheckAsync` via an injected fake
+      `HttpMessageHandler` (no real network calls)._
+- [x] **Crash dump on unhandled exception** (idea #16) — hook
+      `AppDomain.UnhandledException` and
+      `TaskScheduler.UnobservedTaskException`, write a minidump via
+      `MiniDumpWriteDump` P/Invoke to `crashes/<timestamp>.dmp` (capped
+      at 5, LRU cleanup).
+      _Done: `Services/CrashDumpService.cs` installs both handlers plus
+      WinUI's `Application.UnhandledException` from `App.xaml.cs`. Each
+      crash produces a `.dmp` (via `dbghelp!MiniDumpWriteDump`) and a
+      readable `.txt` sidecar with the full exception text. `crashes/`
+      lives next to the exe and is capped at 5 dumps via LRU eviction
+      that also cleans companion sidecars. Reentrant handlers can't
+      throw (all paths wrapped in try/catch). 10 new tests cover
+      filename format, LRU math (including sidecar cleanup, missing-dir
+      noop, non-dump file isolation), and end-to-end sidecar contents._
+- [x] **`IFileSystem` abstraction in `CopyEngine`** (idea #19) — extract
+      the file-system surface (Open / Create / Move / Delete / Exists /
+      Enumerate / GetLastWriteTimeUtc / GetSize) behind an interface so
+      the engine becomes mockable in tests. Required runway for several
+      future features (verify-after-copy, resume, filters).
+      _Done: `Services/IFileSystem.cs` + `RealFileSystem`; `CopyEngine`
+      now takes an optional `IFileSystem` (defaults to `RealFileSystem.Instance`,
+      so the WinUI call site is unchanged); test project ships an
+      `InMemoryFileSystem` fake with 17 substitution + contract tests._
+
 ## Deferred / opt-in
-- [ ] Full MVVM refactor (`MainViewModel`, `RelayCommand`, `IFileSystem` for `CopyEngine`). Invasive, no user-visible benefit.
+- [ ] Full MVVM refactor (`MainViewModel`, `RelayCommand`). Invasive, no user-visible benefit.
+  - Note: the `IFileSystem` half of this is now scheduled for Phase 6 (above) on its own merits.
 
 ## Resolved issues (kept for history)
 - [Fixed] `dotnet build` output crashed with `REGDB_E_CLASSNOTREG` (0x80040154)

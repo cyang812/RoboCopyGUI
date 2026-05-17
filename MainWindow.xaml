@@ -38,10 +38,26 @@
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
                       Padding="20,12,20,16">
-            <Grid RowDefinitions="Auto, *, Auto, Auto, Auto"
+            <Grid RowDefinitions="Auto, Auto, *, Auto, Auto, Auto"
                   MinHeight="420">
 
-            <StackPanel Grid.Row="0"
+            <!-- Self-update notification InfoBar; collapsed by default, shown only
+                 when SelfUpdateService reports a newer release on launch. -->
+            <InfoBar x:Name="UpdateInfoBar"
+                     Grid.Row="0"
+                     IsOpen="False"
+                     IsClosable="True"
+                     Severity="Informational"
+                     Title="Update available"
+                     Margin="0,0,0,8">
+                <InfoBar.ActionButton>
+                    <HyperlinkButton x:Name="UpdateOpenLink"
+                                     Content="View on GitHub"
+                                     Click="UpdateOpenLink_Click"/>
+                </InfoBar.ActionButton>
+            </InfoBar>
+
+            <StackPanel Grid.Row="1"
                         Margin="0,0,0,12">
                 <TextBlock Text="File Transfer Utility"
                            Style="{StaticResource SubtitleTextBlockStyle}"/>
@@ -51,7 +67,7 @@
             </StackPanel>
 
             <Border x:Name="DropArea"
-                    Grid.Row="1"
+                    Grid.Row="2"
                     MinHeight="160"
                     Background="Transparent"
                     BorderBrush="{ThemeResource SystemControlDisabledAccentConfigurableBrush}"
@@ -79,7 +95,7 @@
                               IsTabStop="False">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="local:SourceItem">
-                                <Grid ColumnDefinitions="*, Auto"
+                                <Grid ColumnDefinitions="*, Auto, Auto"
                                       Padding="6,4">
                                     <TextBlock Text="{x:Bind Path}"
                                                TextTrimming="CharacterEllipsis"
@@ -91,8 +107,21 @@
                                     <FontIcon Glyph="{x:Bind StatusGlyph, Mode=OneWay}"
                                               Grid.Column="1"
                                               FontSize="16"
+                                              Margin="0,0,4,0"
                                               Foreground="{x:Bind StatusBrush, Mode=OneWay}"
                                               ToolTipService.ToolTip="{x:Bind StatusToolTip, Mode=OneWay}"/>
+                                    <Button Grid.Column="2"
+                                            Click="RemoveItem_Click"
+                                            Visibility="{x:Bind RemoveVisibility, Mode=OneWay}"
+                                            Padding="6,2"
+                                            MinWidth="0"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            ToolTipService.ToolTip="Remove from queue">
+                                        <FontIcon Glyph="&#xE894;"
+                                                  FontSize="12"
+                                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    </Button>
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -135,7 +164,7 @@
                 </Grid>
             </Border>
 
-            <StackPanel Grid.Row="2"
+            <StackPanel Grid.Row="3"
                         Margin="0,16,0,0"
                         Spacing="8">
                 <TextBlock Text="Destination Path"
@@ -160,8 +189,8 @@
                           Checked="DeleteSourceCheck_Changed"
                           Unchecked="DeleteSourceCheck_Changed"/>
 
-                <!-- Three notification toggles. -->
-                <Grid ColumnDefinitions="Auto, Auto, *"
+                <!-- Three notification toggles + the self-update opt-in. -->
+                <Grid ColumnDefinitions="Auto, Auto, Auto, *"
                       ColumnSpacing="20">
                     <CheckBox x:Name="NotifyOnDoneCheck"
                               Content="Toast on completion"
@@ -177,6 +206,11 @@
                               Content="Show network throughput"
                               Checked="NotificationToggles_Changed"
                               Unchecked="NotificationToggles_Changed"/>
+                    <CheckBox x:Name="CheckUpdatesCheck"
+                              Grid.Column="3"
+                              Content="Check for updates on startup"
+                              Checked="CheckUpdates_Changed"
+                              Unchecked="CheckUpdates_Changed"/>
                 </Grid>
 
                 <Grid ColumnDefinitions="Auto, Auto, *"
@@ -219,7 +253,7 @@
                 </Grid>
             </StackPanel>
 
-            <StackPanel Grid.Row="3"
+            <StackPanel Grid.Row="4"
                         Margin="0,12,0,12"
                         Spacing="4">
                 <Grid ColumnDefinitions="*, Auto">
@@ -257,7 +291,7 @@
                              ToolTipService.ToolTip="Overall progress"/>
             </StackPanel>
 
-            <Grid Grid.Row="4"
+            <Grid Grid.Row="5"
                   ColumnDefinitions="Auto, *, Auto, Auto, Auto">
                 <Button x:Name="ThemeBtn"
                         Click="ThemeBtn_Click"
