@@ -28,7 +28,9 @@ SHADOW  = (0, 0, 0, 60)
 REPO = Path(__file__).resolve().parent.parent
 ASSETS = REPO / "Assets"
 PREVIEW = REPO / "tools" / "preview"
+DOCS_SCREENSHOTS = REPO / "docs" / "screenshots"
 PREVIEW.mkdir(parents=True, exist_ok=True)
+DOCS_SCREENSHOTS.mkdir(parents=True, exist_ok=True)
 
 
 def vgrad(size: int, top: tuple[int, int, int], bot: tuple[int, int, int]) -> Image.Image:
@@ -217,6 +219,14 @@ def main() -> None:
     write_ico_manual(ico_path, pngs)
     print(f"\nWrote {ico_path}  ({ico_path.stat().st_size} bytes, "
           f"{len(sizes)} resolutions: {sizes})")
+
+    # Also emit a tracked PNG used as the README hero image. We pick the 128px
+    # render rather than 256 so the README doesn't render a huge logo on
+    # narrow viewports.
+    hero_src = pngs[sizes.index(128)]
+    hero_path = DOCS_SCREENSHOTS / "appicon.png"
+    hero_src.save(hero_path)
+    print(f"Wrote {hero_path}  (README hero)")
 
 
 if __name__ == "__main__":

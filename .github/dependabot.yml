@@ -1,0 +1,62 @@
+# Dependabot configuration for RoboCopyGUI.
+#
+# Keeps NuGet packages (both the WinUI csproj and the Tests csproj) and the
+# GitHub Actions used in our workflows up to date with weekly grouped PRs.
+# Idea #25 from ideas.md.
+
+version: 2
+
+updates:
+  # WinUI 3 app dependencies (Microsoft.WindowsAppSDK, Serilog, etc.)
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels:
+      - "deps"
+      - "nuget"
+    groups:
+      # Microsoft platform stack (Windows App SDK, WinUI, SDK build tools)
+      # gets one combined PR per week rather than five separate ones.
+      microsoft-platform:
+        patterns:
+          - "Microsoft.*"
+      # Logging stack (Serilog + sinks) likewise.
+      serilog:
+        patterns:
+          - "Serilog*"
+
+  # Tests project dependencies (xUnit, Microsoft.NET.Test.Sdk, Serilog).
+  - package-ecosystem: "nuget"
+    directory: "/Tests"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels:
+      - "deps"
+      - "nuget"
+      - "tests"
+    groups:
+      xunit:
+        patterns:
+          - "xunit*"
+
+  # GitHub Actions used in workflows under .github/workflows/.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels:
+      - "deps"
+      - "github-actions"

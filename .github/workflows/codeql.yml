@@ -1,0 +1,62 @@
+name: codeql
+
+# Static analysis for C# via CodeQL. Runs on every push/PR to main plus a
+# weekly schedule to catch advisories published after the last commit.
+# Idea #25 from ideas.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly re-scan so newly-published CodeQL queries hit the codebase even
+    # when no commits have landed. 06:00 UTC = 14:00 Asia/Shanghai Monday.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze C#
+    # WinUI 3 + Microsoft.WindowsAppSDK requires a Windows builder for the
+    # build-mode autobuild step; ubuntu can't compile the main csproj.
+    runs-on: windows-latest
+
+    permissions:
+      actions: read
+      contents: read
+      security-events: write   # required to upload SARIF results
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+          # security-extended adds CWE coverage that the default suite skips
+          # (e.g. CWE-78 command injection, CWE-79 XSS). Tradeoff: ~2x runtime.
+          queries: security-extended
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore RoboCopyGUI.csproj
+
+      - name: Build (no incremental, no shared compilation — CodeQL needs to observe every file)
+        shell: pwsh
+        run: |
+          dotnet build RoboCopyGUI.csproj `
+            -c Release `
+            -p:Platform=x64 `
+            --no-restore `
+            --no-incremental `
+            -p:UseSharedCompilation=false
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:csharp"

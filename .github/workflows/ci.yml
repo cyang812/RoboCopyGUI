@@ -3,6 +3,10 @@ name: ci
 on:
   push:
     branches: [main]
+    # Tag pushes (v1.2.3) also build + publish, then the release job below
+    # creates a GitHub Release with the matrix artifacts attached, so the
+    # in-app self-update checker can point users at a real download.
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -74,3 +78,52 @@ jobs:
           name: RoboCopyGUI-${{ matrix.rid }}
           path: artifacts/${{ matrix.rid }}/
           if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # Release job: only runs on tag pushes (e.g. `git tag v1.2.3 && git
+  # push --tags`). Downloads the matrix artifacts that build-and-publish
+  # just uploaded, zips each RID's publish folder, and creates / updates
+  # the GitHub Release at that tag with both .zip files attached so the
+  # in-app self-update InfoBar can link users straight at a real download.
+  # ------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: build-and-publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write    # required for softprops/action-gh-release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Zip each RID's publish folder
+        # Each artifact is a folder under artifacts/<artifact-name>/.
+        # We zip them with their RID-tagged tag name so the asset filename
+        # is self-describing on the Releases page.
+        run: |
+          set -euxo pipefail
+          TAG_NAME="${GITHUB_REF_NAME}"
+          mkdir -p release-assets
+          cd artifacts
+          for dir in */; do
+            name="${dir%/}"
+            # Strip the "RoboCopyGUI-" prefix so the zip is "RoboCopyGUI-v1.2.3-win-x64.zip".
+            rid="${name#RoboCopyGUI-}"
+            out="../release-assets/RoboCopyGUI-${TAG_NAME}-${rid}.zip"
+            (cd "$name" && zip -r "$out" .)
+          done
+          ls -la ../release-assets
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*.zip
+          generate_release_notes: true
+          # If the tag name contains "-rc"/"-beta"/etc. mark it prerelease so
+          # the in-app /releases/latest check (which only returns stable
+          # releases) skips it automatically.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+
