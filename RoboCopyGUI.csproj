@@ -32,6 +32,16 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
 
     <!--
+      App version. Bump manually before tagging a release (e.g. set 0.2.0
+      and `git tag v0.2.0`). Propagates to AssemblyVersion, FileVersion,
+      and AssemblyInformationalVersion; the latter is what the title bar
+      and SelfUpdateService surface as the "current version" — so keeping
+      this in sync with release tags is the single source of truth for
+      "what version is the user running".
+    -->
+    <Version>0.1.0</Version>
+
+    <!--
       Icon embedded into the unpackaged .exe so Explorer, taskbar and Alt-Tab
       all show the custom RoboCopyGUI icon instead of the generic .NET app
       glyph. The packaged MSIX path uses the Assets/Square*.png logos via

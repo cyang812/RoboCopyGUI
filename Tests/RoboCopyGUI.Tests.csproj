@@ -19,6 +19,7 @@
     <Compile Include="..\Services\IFileSystem.cs" Link="Services\IFileSystem.cs" />
     <Compile Include="..\Services\PauseTokenSource.cs" Link="Services\PauseTokenSource.cs" />
     <Compile Include="..\Services\SelfUpdateService.cs" Link="Services\SelfUpdateService.cs" />
+    <Compile Include="..\Services\VersionInfo.cs" Link="Services\VersionInfo.cs" />
     <Compile Include="..\Services\Enums.cs" Link="Services\Enums.cs" />
   </ItemGroup>
 
