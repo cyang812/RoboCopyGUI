@@ -106,16 +106,20 @@ jobs:
         run: |
           set -euxo pipefail
           TAG_NAME="${GITHUB_REF_NAME}"
-          mkdir -p release-assets
+          # Use an absolute path so the subshell below (which `cd`s into the
+          # per-RID folder, making the workspace TWO levels up) still finds
+          # the output directory correctly.
+          OUT_DIR="$PWD/release-assets"
+          mkdir -p "$OUT_DIR"
           cd artifacts
           for dir in */; do
             name="${dir%/}"
             # Strip the "RoboCopyGUI-" prefix so the zip is "RoboCopyGUI-v1.2.3-win-x64.zip".
             rid="${name#RoboCopyGUI-}"
-            out="../release-assets/RoboCopyGUI-${TAG_NAME}-${rid}.zip"
+            out="$OUT_DIR/RoboCopyGUI-${TAG_NAME}-${rid}.zip"
             (cd "$name" && zip -r "$out" .)
           done
-          ls -la ../release-assets
+          ls -la "$OUT_DIR"
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
