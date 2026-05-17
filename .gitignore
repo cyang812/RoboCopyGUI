@@ -53,3 +53,7 @@ _pkginfo.txt
 
 # Crash dumps emitted by CrashDumpService (Phase 6 idea #16)
 crashes/
+
+# Local PNG previews emitted by tools/make-icon.py (kept out of git;
+# regenerate with `python tools/make-icon.py` whenever the icon changes).
+tools/preview/

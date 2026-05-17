@@ -67,6 +67,7 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppTitleText.Text = GetWindowTitle();
+        SetWindowIcon();
 
         // Bind the dest-history dropdown ONCE; afterwards we just mutate _destHistory in
         // place. Reassigning ItemsSource on an editable ComboBox clears the editable
@@ -92,6 +93,28 @@ public sealed partial class MainWindow : Window
         // Fire the update check after the window is fully constructed so an InfoBar
         // can appear without racing with InitializeComponent / theme application.
         StartSelfUpdateCheck();
+    }
+
+    /// <summary>
+    /// Tell the AppWindow to use <c>Assets\AppIcon.ico</c> for the taskbar /
+    /// Alt-Tab / title-bar icon. Without this, an unpackaged WinUI 3 window
+    /// shows the default WinUI icon even though the .exe itself has an
+    /// embedded ApplicationIcon. Best-effort: if AppWindow is unavailable or
+    /// the file is missing, we silently fall back to whatever Windows picked
+    /// from the embedded .exe icon.
+    /// </summary>
+    private void SetWindowIcon()
+    {
+        try
+        {
+            string iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
+            if (!File.Exists(iconPath)) return;
+            AppWindow?.SetIcon(iconPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not set window icon from {Path}", "Assets/AppIcon.ico");
+        }
     }
 
     /// <summary>Logical-pixel floor below which the layout starts to break / clip.
